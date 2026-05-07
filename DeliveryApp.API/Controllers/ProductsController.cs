@@ -1,0 +1,164 @@
+﻿using DeliveryApp.API.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace DeliveryApp.API.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class ProductsController : ControllerBase
+    {
+        private readonly ApplicationDbContext _context;
+        public ProductsController(ApplicationDbContext context) => _context = context;
+
+        // GET api/products/{id}
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetById(int id)
+        {
+            var product = await _context.Products
+                .Where(p => p.Id == id && p.IsActive)
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    p.Description,
+                    p.Price,
+                    p.DiscountedPrice,
+                    p.ImageUrl,
+                    p.PreparationTime,
+                    p.Calories,
+                    p.IsAvailable,
+                    Category = new { p.Category.Id, p.Category.Name },
+                    RestaurantId = p.Category.RestaurantId
+                })
+                .FirstOrDefaultAsync();
+
+            if (product == null) return NotFound(new { message = "Product not found" });
+            return Ok(product);
+        }
+
+        // GET api/products/search?q=kofta&restaurantId=1
+        [HttpGet("search")]
+        public async Task<IActionResult> Search(
+            [FromQuery] string q,
+            [FromQuery] int? restaurantId,
+            [FromQuery] decimal? maxPrice,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            var query = _context.Products
+                .Where(p => p.IsActive && p.IsAvailable)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(q))
+                query = query.Where(p => p.Name.Contains(q) || p.Description!.Contains(q));
+
+            if (restaurantId.HasValue)
+                query = query.Where(p => p.Category.RestaurantId == restaurantId.Value);
+
+            if (maxPrice.HasValue)
+                query = query.Where(p => (p.DiscountedPrice ?? p.Price) <= maxPrice.Value);
+
+            var total = await query.CountAsync();
+            var products = await query
+                .Skip((page - 1) * pageSize).Take(pageSize)
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    p.Price,
+                    p.DiscountedPrice,
+                    p.ImageUrl,
+                    p.IsAvailable,
+                    CategoryName = p.Category.Name,
+                    RestaurantId = p.Category.RestaurantId,
+                    RestaurantName = p.Category.Restaurant.Name
+                })
+                .ToListAsync();
+
+            return Ok(new { total, page, pageSize, data = products });
+        }
+
+        // POST api/products  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpPost]
+        public async Task<IActionResult> Create([FromBody] CreateProductDto dto)
+        {
+            var categoryExists = await _context.Categories.AnyAsync(c => c.Id == dto.CategoryId);
+            if (!categoryExists) return BadRequest(new { message = "Category not found" });
+
+            var product = new Product
+            {
+                CategoryId = dto.CategoryId,
+                Name = dto.Name,
+                Description = dto.Description,
+                Price = dto.Price,
+                DiscountedPrice = dto.DiscountedPrice,
+                ImageUrl = dto.ImageUrl,
+                PreparationTime = dto.PreparationTime,
+                Calories = dto.Calories,
+                IsAvailable = true,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.Products.Add(product);
+            await _context.SaveChangesAsync();
+            return CreatedAtAction(nameof(GetById), new { id = product.Id }, new { product.Id, product.Name });
+        }
+
+        // PUT api/products/{id}  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpPut("{id}")]
+        public async Task<IActionResult> Update(int id, [FromBody] CreateProductDto dto)
+        {
+            var product = await _context.Products.FindAsync(id);
+            if (product == null) return NotFound();
+
+            product.Name = dto.Name; product.Description = dto.Description;
+            product.Price = dto.Price; product.DiscountedPrice = dto.DiscountedPrice;
+            product.ImageUrl = dto.ImageUrl; product.PreparationTime = dto.PreparationTime;
+            product.Calories = dto.Calories;
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Updated successfully" });
+        }
+
+        // PUT api/products/{id}/toggle-availability  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpPut("{id}/toggle-availability")]
+        public async Task<IActionResult> ToggleAvailability(int id)
+        {
+            var product = await _context.Products.FindAsync(id);
+            if (product == null) return NotFound();
+
+            product.IsAvailable = !product.IsAvailable;
+            await _context.SaveChangesAsync();
+            return Ok(new { message = product.IsAvailable ? "Product is now available" : "Product is now unavailable", product.IsAvailable });
+        }
+
+        // DELETE api/products/{id}  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(int id)
+        {
+            var product = await _context.Products.FindAsync(id);
+            if (product == null) return NotFound();
+            product.IsActive = false; // Soft delete
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Product deleted" });
+        }
+    }
+
+    public class CreateProductDto
+    {
+        public int CategoryId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public decimal Price { get; set; }
+        public decimal? DiscountedPrice { get; set; }
+        public string? ImageUrl { get; set; }
+        public int PreparationTime { get; set; } = 15;
+        public int? Calories { get; set; }
+    }
+}
