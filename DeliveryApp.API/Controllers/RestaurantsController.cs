@@ -18,13 +18,12 @@ namespace DeliveryApp.API.Controllers
 
         // ─────────────────────────────────────────────
         // GET api/restaurants
-        // عرض كل المطاعم مع فلترة + pagination
         // ─────────────────────────────────────────────
         [HttpGet]
         public async Task<IActionResult> GetAll(
             [FromQuery] string? search,
             [FromQuery] bool? isOpen,
-            [FromQuery] string? sortBy,   // "rating" | "deliveryFee" | "estimatedTime"
+            [FromQuery] string? sortBy,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 10)
         {
@@ -32,17 +31,14 @@ namespace DeliveryApp.API.Controllers
                 .Where(r => r.IsActive)
                 .AsQueryable();
 
-            // فلتر البحث بالاسم أو العنوان
             if (!string.IsNullOrWhiteSpace(search))
                 query = query.Where(r =>
                     r.Name.Contains(search) ||
                     r.Address.Contains(search));
 
-            // فلتر الحالة (مفتوح / مغلق)
             if (isOpen.HasValue)
                 query = query.Where(r => r.IsOpen == isOpen.Value);
 
-            // الترتيب
             query = sortBy switch
             {
                 "rating" => query.OrderByDescending(r => r.Rating),
@@ -85,7 +81,6 @@ namespace DeliveryApp.API.Controllers
 
         // ─────────────────────────────────────────────
         // GET api/restaurants/{id}
-        // تفاصيل مطعم معين
         // ─────────────────────────────────────────────
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
@@ -120,7 +115,6 @@ namespace DeliveryApp.API.Controllers
 
         // ─────────────────────────────────────────────
         // GET api/restaurants/{id}/menu
-        // قائمة الأكل: أقسام + منتجات
         // ─────────────────────────────────────────────
         [HttpGet("{id}/menu")]
         public async Task<IActionResult> GetMenu(int id)
@@ -162,7 +156,6 @@ namespace DeliveryApp.API.Controllers
 
         // ─────────────────────────────────────────────
         // GET api/restaurants/nearby
-        // مطاعم قريبة من موقع العميل
         // ─────────────────────────────────────────────
         [HttpGet("nearby")]
         public async Task<IActionResult> GetNearby(
@@ -170,7 +163,6 @@ namespace DeliveryApp.API.Controllers
             [FromQuery] double lng,
             [FromQuery] double radiusKm = 10)
         {
-            // حساب المسافة بـ Haversine Formula
             var restaurants = await _context.Restaurants
                 .Where(r => r.IsActive && r.IsOpen)
                 .ToListAsync();
@@ -196,7 +188,6 @@ namespace DeliveryApp.API.Controllers
 
         // ─────────────────────────────────────────────
         // GET api/restaurants/{id}/reviews
-        // تقييمات المطعم
         // ─────────────────────────────────────────────
         [HttpGet("{id}/reviews")]
         public async Task<IActionResult> GetReviews(
@@ -235,7 +226,6 @@ namespace DeliveryApp.API.Controllers
 
         // ─────────────────────────────────────────────
         // POST api/restaurants  [Admin Only]
-        // إضافة مطعم جديد
         // ─────────────────────────────────────────────
         [Authorize(Roles = "Admin")]
         [HttpPost]
@@ -266,10 +256,43 @@ namespace DeliveryApp.API.Controllers
         }
 
         // ─────────────────────────────────────────────
-        // PUT api/restaurants/{id}/toggle-status  [Admin]
-        // فتح / غلق المطعم
+        // PUT api/restaurants/{id}/desktop-update
+        // تحديث بيانات المطعم من تطبيق المطعم الداخلي
         // ─────────────────────────────────────────────
-        [Authorize(Roles = "Admin")]
+        [AllowAnonymous]
+        [HttpPut("{id}/desktop-update")]
+        public async Task<IActionResult> DesktopUpdate(int id, [FromBody] UpdateRestaurantDto dto)
+        {
+            var restaurant = await _context.Restaurants.FindAsync(id);
+
+            if (restaurant == null)
+                return NotFound(new { message = "Restaurant not found" });
+
+            restaurant.Name = dto.Name;
+            restaurant.Phone = dto.Phone;
+            restaurant.Address = dto.Address;
+            restaurant.Description = dto.Description;
+            restaurant.DeliveryFee = dto.DeliveryFee;
+            restaurant.MinOrderAmount = dto.MinOrderAmount;
+            restaurant.EstimatedTime = dto.EstimatedTime;
+            restaurant.IsOpen = dto.IsOpen;
+
+            if (!string.IsNullOrWhiteSpace(dto.ImageUrl))
+                restaurant.ImageUrl = dto.ImageUrl;
+
+            if (!string.IsNullOrWhiteSpace(dto.CoverImageUrl))
+                restaurant.CoverImageUrl = dto.CoverImageUrl;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Restaurant updated successfully" });
+        }
+
+        // ─────────────────────────────────────────────
+        // PUT api/restaurants/{id}/toggle-status
+        // فتح / غلق المطعم — بدون Authorize حتى يشتغل مع تطبيق المطعم
+        // ─────────────────────────────────────────────
+        [AllowAnonymous]
         [HttpPut("{id}/toggle-status")]
         public async Task<IActionResult> ToggleStatus(int id)
         {
@@ -319,5 +342,19 @@ namespace DeliveryApp.API.Controllers
         public decimal DeliveryFee { get; set; }
         public decimal MinOrderAmount { get; set; }
         public int EstimatedTime { get; set; } = 30;
+    }
+
+    public class UpdateRestaurantDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public string? Phone { get; set; }
+        public string Address { get; set; } = string.Empty;
+        public decimal DeliveryFee { get; set; }
+        public decimal MinOrderAmount { get; set; }
+        public int EstimatedTime { get; set; } = 30;
+        public bool IsOpen { get; set; }
+        public string? ImageUrl { get; set; }
+        public string? CoverImageUrl { get; set; }
     }
 }
