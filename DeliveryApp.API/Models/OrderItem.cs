@@ -21,6 +21,7 @@ public partial class OrderItem
     public decimal UnitPrice { get; set; }
 
     [Column(TypeName = "decimal(21, 2)")]
+    [DatabaseGenerated(DatabaseGeneratedOption.Computed)]
     public decimal? TotalPrice { get; set; }
 
     [StringLength(200)]

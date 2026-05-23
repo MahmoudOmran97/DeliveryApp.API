@@ -213,6 +213,123 @@ namespace DeliveryApp.API.Controllers
         }
 
         // ─────────────────────────────────────────────
+        // GET api/orders/restaurant/{restaurantId}
+        // خاص ببرنامج سطح المكتب للمطعم
+        // ─────────────────────────────────────────────
+        [AllowAnonymous]
+        [HttpGet("restaurant/{restaurantId}")]
+        public async Task<IActionResult> GetByRestaurant(
+            int restaurantId,
+            [FromQuery] string? status,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            var query = _context.Orders
+                .Where(o => o.RestaurantId == restaurantId)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(status))
+                query = query.Where(o => o.Status == status);
+
+            var total = await query.CountAsync();
+
+            var orders = await query
+                .OrderByDescending(o => o.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(o => new
+                {
+                    o.Id,
+                    o.Status,
+                    o.SubTotal,
+                    o.DeliveryFee,
+                    o.Discount,
+                    o.TotalAmount,
+                    o.PaymentMethod,
+                    o.PaymentStatus,
+                    o.DeliveryAddress,
+                    o.DeliveryNotes,
+                    o.EstimatedDelivery,
+                    o.CancellationReason,
+                    o.CreatedAt,
+                    o.AcceptedAt,
+                    o.PickedUpAt,
+                    o.DeliveredAt,
+                    Restaurant = new { o.Restaurant.Id, o.Restaurant.Name, o.Restaurant.ImageUrl, o.Restaurant.Phone },
+                    CustomerName = o.Customer.FullName,
+                    CustomerPhone = o.Customer.Phone,
+                    Items = o.OrderItems.Select(i => new
+                    {
+                        i.Id,
+                        i.ProductId,
+                        ProductName = i.Product.Name,
+                        ProductImage = i.Product.ImageUrl,
+                        i.Quantity,
+                        i.UnitPrice,
+                        i.TotalPrice,
+                        i.Notes
+                    })
+                })
+                .ToListAsync();
+
+            return Ok(new { total, page, pageSize, data = orders });
+        }
+
+        // ─────────────────────────────────────────────
+        // PUT api/orders/{id}/restaurant-status
+        // تحديث حالة الأوردر من برنامج المطعم (بدون تسجيل دخول)
+        // ─────────────────────────────────────────────
+        [AllowAnonymous]
+        [HttpPut("{id}/restaurant-status")]
+        public async Task<IActionResult> UpdateRestaurantStatus(int id, [FromBody] UpdateStatusDto dto)
+        {
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == id);
+            if (order == null) return NotFound();
+
+            // المطعم فقط يقدر يغير: Pending → Accepted/Rejected, Accepted → Preparing, Preparing → ReadyForPickup
+            var restaurantTransitions = new Dictionary<string, string[]>
+            {
+                ["Pending"] = new[] { "Accepted", "Rejected" },
+                ["Accepted"] = new[] { "Preparing" },
+                ["Preparing"] = new[] { "ReadyForPickup" },
+            };
+
+            if (!restaurantTransitions.ContainsKey(order.Status) ||
+                !restaurantTransitions[order.Status].Contains(dto.Status))
+                return BadRequest(new { message = $"Cannot transition from {order.Status} to {dto.Status}" });
+
+            order.Status = dto.Status;
+
+            if (dto.Status == "Accepted") order.AcceptedAt = DateTime.UtcNow;
+
+            var notifMap = new Dictionary<string, (string Title, string Body, string Type)>
+            {
+                ["Accepted"] = ("Order Accepted!", "Your order has been accepted.", "OrderAccepted"),
+                ["Preparing"] = ("Preparing Order", "The restaurant is preparing your food.", "OrderPreparing"),
+                ["ReadyForPickup"] = ("Order Ready!", "Your order is ready for pickup by driver.", "OrderReadyForPickup"),
+                ["Rejected"] = ("Order Rejected", "Sorry, your order was rejected.", "OrderCancelled"),
+            };
+
+            if (notifMap.TryGetValue(dto.Status, out var notif))
+            {
+                _context.Notifications.Add(new Notification
+                {
+                    UserId = order.CustomerId,
+                    Title = notif.Title,
+                    Body = notif.Body,
+                    Type = notif.Type,
+                    OrderId = order.Id,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            await _context.SaveChangesAsync();
+            await _hubService.NotifyOrderStatusChanged(order.Id, dto.Status);
+
+            return Ok(new { message = "Status updated", order.Status });
+        }
+
+        // ─────────────────────────────────────────────
         // PUT api/orders/{id}/cancel
         // ─────────────────────────────────────────────
         [HttpPut("{id}/cancel")]

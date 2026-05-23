@@ -80,8 +80,8 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { total, page, pageSize, data = products });
         }
 
-        // POST api/products  [Admin]
-        [Authorize(Roles = "Admin")]
+        // POST api/products  [Admin or Restaurant Desktop]
+        [AllowAnonymous]
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateProductDto dto)
         {
@@ -108,8 +108,8 @@ namespace DeliveryApp.API.Controllers
             return CreatedAtAction(nameof(GetById), new { id = product.Id }, new { product.Id, product.Name });
         }
 
-        // PUT api/products/{id}  [Admin]
-        [Authorize(Roles = "Admin")]
+        // PUT api/products/{id}  [Admin or Restaurant Desktop]
+        [AllowAnonymous]
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(int id, [FromBody] CreateProductDto dto)
         {
@@ -124,8 +124,8 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { message = "Updated successfully" });
         }
 
-        // PUT api/products/{id}/toggle-availability  [Admin]
-        [Authorize(Roles = "Admin")]
+        // PUT api/products/{id}/toggle-availability  [Admin or Restaurant Desktop]
+        [AllowAnonymous]
         [HttpPut("{id}/toggle-availability")]
         public async Task<IActionResult> ToggleAvailability(int id)
         {
@@ -137,8 +137,8 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { message = product.IsAvailable ? "Product is now available" : "Product is now unavailable", product.IsAvailable });
         }
 
-        // DELETE api/products/{id}  [Admin]
-        [Authorize(Roles = "Admin")]
+        // DELETE api/products/{id}  [Admin or Restaurant Desktop]
+        [AllowAnonymous]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
