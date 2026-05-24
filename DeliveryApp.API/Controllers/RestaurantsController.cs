@@ -277,6 +277,13 @@ namespace DeliveryApp.API.Controllers
             restaurant.EstimatedTime = dto.EstimatedTime;
             restaurant.IsOpen = dto.IsOpen;
 
+            // تحديث الموقع لو اتبعت قيم جديدة
+            if (dto.Latitude != 0 && dto.Longitude != 0)
+            {
+                restaurant.Latitude = dto.Latitude;
+                restaurant.Longitude = dto.Longitude;
+            }
+
             if (!string.IsNullOrWhiteSpace(dto.ImageUrl))
                 restaurant.ImageUrl = dto.ImageUrl;
 
@@ -350,6 +357,8 @@ namespace DeliveryApp.API.Controllers
         public string? Description { get; set; }
         public string? Phone { get; set; }
         public string Address { get; set; } = string.Empty;
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
         public decimal DeliveryFee { get; set; }
         public decimal MinOrderAmount { get; set; }
         public int EstimatedTime { get; set; } = 30;

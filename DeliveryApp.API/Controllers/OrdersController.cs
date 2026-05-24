@@ -150,7 +150,7 @@ namespace DeliveryApp.API.Controllers
                     o.AcceptedAt,
                     o.PickedUpAt,
                     o.DeliveredAt,
-                    Restaurant = new { o.Restaurant.Id, o.Restaurant.Name, o.Restaurant.ImageUrl, o.Restaurant.Phone },
+                    Restaurant = new { o.Restaurant.Id, o.Restaurant.Name, o.Restaurant.ImageUrl, o.Restaurant.Phone, o.Restaurant.Latitude, o.Restaurant.Longitude },
                     Driver = o.Driver == null ? null : new
                     {
                         o.Driver.Id,
