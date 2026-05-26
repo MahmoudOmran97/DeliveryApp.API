@@ -13,20 +13,30 @@ namespace DeliveryApp.API.Hubs
         public TrackingHub(ApplicationDbContext context) => _context = context;
 
         // ─────────────────────────────────────────────
-        // العميل بيدخل غرفة الطلب عشان يتابع الطيار
-        // يُستدعى من الـ MAUI بعد ما يعمل طلب
+        // العميل أو الدرايفر بيدخل غرفة الطلب
+        // BUG FIX A: كان بيتحقق بس من CustomerId فالدرايفر مش قادر يدخل الـ group
         // ─────────────────────────────────────────────
         public async Task JoinOrderTracking(int orderId)
         {
             var userId = GetUserId();
 
-            // تأكد إن الطلب تبع العميل ده
+            // السماح للعميل أو الدرايفر بالانضمام
             var order = await _context.Orders
-                .FirstOrDefaultAsync(o => o.Id == orderId && o.CustomerId == userId);
+                .Include(o => o.Driver)
+                .FirstOrDefaultAsync(o => o.Id == orderId);
 
             if (order == null)
             {
                 await Clients.Caller.SendAsync("Error", "Order not found");
+                return;
+            }
+
+            bool isCustomer = order.CustomerId == userId;
+            bool isDriver = order.Driver?.UserId == userId;
+
+            if (!isCustomer && !isDriver)
+            {
+                await Clients.Caller.SendAsync("Error", "Unauthorized");
                 return;
             }
 
@@ -39,7 +49,7 @@ namespace DeliveryApp.API.Hubs
         }
 
         // ─────────────────────────────────────────────
-        // العميل يخرج من غرفة التتبع
+        // خروج من غرفة التتبع
         // ─────────────────────────────────────────────
         public async Task LeaveOrderTracking(int orderId)
         {
@@ -47,8 +57,7 @@ namespace DeliveryApp.API.Hubs
         }
 
         // ─────────────────────────────────────────────
-        // الطيار يبعت موقعه — بيتبعت لكل اللي في الغرفة
-        // يُستدعى كل 3-5 ثوان من الـ Driver App
+        // الطيار يبعت موقعه
         // ─────────────────────────────────────────────
         public async Task UpdateDriverLocation(UpdateLocationRequest request)
         {
@@ -63,12 +72,10 @@ namespace DeliveryApp.API.Hubs
                 return;
             }
 
-            // تحديث الموقع في الداتابيز
             driver.CurrentLatitude = request.Latitude;
             driver.CurrentLongitude = request.Longitude;
             driver.LastLocationUpdate = DateTime.UtcNow;
 
-            // تسجيل الموقع في DriverLocations لو في طلب نشط
             if (request.OrderId.HasValue)
             {
                 _context.DriverLocations.Add(new DriverLocation
@@ -85,7 +92,6 @@ namespace DeliveryApp.API.Hubs
 
             await _context.SaveChangesAsync();
 
-            // بعت الموقع لكل العملاء في غرفة الطلب ده
             if (request.OrderId.HasValue)
             {
                 await Clients
@@ -103,8 +109,7 @@ namespace DeliveryApp.API.Hubs
         }
 
         // ─────────────────────────────────────────────
-        // تحديث حالة الطلب — بيتبعت للعميل فوراً
-        // يُستدعى من OrdersController بعد كل تغيير في Status
+        // تحديث حالة الطلب
         // ─────────────────────────────────────────────
         public async Task NotifyOrderStatusChanged(int orderId, string newStatus)
         {
@@ -113,6 +118,9 @@ namespace DeliveryApp.API.Hubs
                 .SendAsync("OrderStatusChanged", new { orderId, status = newStatus });
         }
 
+        // ─────────────────────────────────────────────
+        // الشات
+        // ─────────────────────────────────────────────
         public async Task DeleteChatMessages(int orderId)
         {
             var messages = await _context.ChatMessages.Where(m => m.OrderId == orderId).ToListAsync();
@@ -126,15 +134,23 @@ namespace DeliveryApp.API.Hubs
         public async Task SendChatMessage(int orderId, string message)
         {
             var userId = GetUserId();
-            // BUG FIX: FindAsync لا يعمل Eager Load للـ Driver
-            // يجب استخدام Include عشان order.Driver?.UserId تشتغل صح
+
             var order = await _context.Orders
                 .Include(o => o.Driver)
                 .FirstOrDefaultAsync(o => o.Id == orderId);
 
-            if (order == null || (order.CustomerId != userId && order.Driver?.UserId != userId))
+            if (order == null)
             {
-                await Clients.Caller.SendAsync("Error", "Unauthorized or order not found");
+                await Clients.Caller.SendAsync("Error", "Order not found");
+                return;
+            }
+
+            bool isCustomer = order.CustomerId == userId;
+            bool isDriver = order.Driver?.UserId == userId;
+
+            if (!isCustomer && !isDriver)
+            {
+                await Clients.Caller.SendAsync("Error", "Unauthorized");
                 return;
             }
 
@@ -161,18 +177,26 @@ namespace DeliveryApp.API.Hubs
         public async Task StartVoiceCall(int orderId)
         {
             var userId = GetUserId();
-            // BUG FIX: نفس المشكلة — نحتاج Include للـ Driver
+
             var order = await _context.Orders
                 .Include(o => o.Driver)
                 .FirstOrDefaultAsync(o => o.Id == orderId);
 
-            if (order == null || (order.CustomerId != userId && order.Driver?.UserId != userId))
+            if (order == null)
             {
-                await Clients.Caller.SendAsync("Error", "Unauthorized or order not found");
+                await Clients.Caller.SendAsync("Error", "Order not found");
                 return;
             }
 
-            // Notify the other party about the incoming call
+            bool isCustomer = order.CustomerId == userId;
+            bool isDriver = order.Driver?.UserId == userId;
+
+            if (!isCustomer && !isDriver)
+            {
+                await Clients.Caller.SendAsync("Error", "Unauthorized");
+                return;
+            }
+
             await Clients.Group($"order_{orderId}").SendAsync("IncomingVoiceCall", new
             {
                 orderId,
@@ -197,9 +221,6 @@ namespace DeliveryApp.API.Hubs
             await base.OnDisconnectedAsync(exception);
         }
 
-        // ─────────────────────────────────────────────
-        // Helper
-        // ─────────────────────────────────────────────
         private int GetUserId()
         {
             var claim = Context.User?.Claims

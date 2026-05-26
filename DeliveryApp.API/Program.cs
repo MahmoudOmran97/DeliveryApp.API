@@ -87,6 +87,45 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// ?????????????????????????????????????????????????????????????
+// BUG FIX B: ???? ChatMessages ?? ????? ?? ?????????
+// ???? ????? ??? DbContext ???? migration
+// ????: ???? CREATE TABLE IF NOT EXISTS ??? startup
+// ?????????????????????????????????????????????????????????????
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_NAME = 'ChatMessages'
+            )
+            BEGIN
+                CREATE TABLE [dbo].[ChatMessages] (
+                    [Id]        INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [OrderId]   INT            NOT NULL,
+                    [SenderId]  INT            NOT NULL,
+                    [Message]   NVARCHAR(1000) NOT NULL,
+                    [Timestamp] DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+                    CONSTRAINT [FK_ChatMessages_Orders]
+                        FOREIGN KEY ([OrderId]) REFERENCES [Orders]([Id]) ON DELETE CASCADE,
+                    CONSTRAINT [FK_ChatMessages_Users]
+                        FOREIGN KEY ([SenderId]) REFERENCES [Users]([Id])
+                );
+                CREATE INDEX [IX_ChatMessages_OrderId]  ON [dbo].[ChatMessages]([OrderId]);
+                CREATE INDEX [IX_ChatMessages_SenderId] ON [dbo].[ChatMessages]([SenderId]);
+            END
+        ");
+    }
+    catch (Exception ex)
+    {
+        // log only — don't crash the app
+        Console.WriteLine($"[Startup] ChatMessages table check failed: {ex.Message}");
+    }
+}
+
 app.UseSwagger();
 app.UseSwaggerUI();
 app.UseHttpsRedirection();
