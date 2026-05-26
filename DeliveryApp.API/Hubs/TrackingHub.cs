@@ -126,7 +126,11 @@ namespace DeliveryApp.API.Hubs
         public async Task SendChatMessage(int orderId, string message)
         {
             var userId = GetUserId();
-            var order = await _context.Orders.FindAsync(orderId);
+            // BUG FIX: FindAsync لا يعمل Eager Load للـ Driver
+            // يجب استخدام Include عشان order.Driver?.UserId تشتغل صح
+            var order = await _context.Orders
+                .Include(o => o.Driver)
+                .FirstOrDefaultAsync(o => o.Id == orderId);
 
             if (order == null || (order.CustomerId != userId && order.Driver?.UserId != userId))
             {
@@ -157,7 +161,10 @@ namespace DeliveryApp.API.Hubs
         public async Task StartVoiceCall(int orderId)
         {
             var userId = GetUserId();
-            var order = await _context.Orders.FindAsync(orderId);
+            // BUG FIX: نفس المشكلة — نحتاج Include للـ Driver
+            var order = await _context.Orders
+                .Include(o => o.Driver)
+                .FirstOrDefaultAsync(o => o.Id == orderId);
 
             if (order == null || (order.CustomerId != userId && order.Driver?.UserId != userId))
             {
