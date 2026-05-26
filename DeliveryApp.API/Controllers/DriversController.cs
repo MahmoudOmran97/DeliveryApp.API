@@ -233,7 +233,7 @@ namespace DeliveryApp.API.Controllers
                     o.DeliveryLongitude,
                     o.DeliveryNotes,
                     CustomerName = o.Customer.FullName,
-                    CustomerPhone = o.Customer.Phone,
+                    // CustomerPhone = o.Customer.Phone, // Hidden as per requirement
                     RestaurantName = o.Restaurant.Name,
                     RestaurantLat = o.Restaurant.Latitude,
                     RestaurantLng = o.Restaurant.Longitude,

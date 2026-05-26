@@ -10,6 +10,7 @@ namespace DeliveryApp.API.Services
     {
         Task NotifyOrderStatusChanged(int orderId, string status);
         Task NotifyUserDirectly(int userId, string method, object data);
+        Task DeleteChatMessages(int orderId);
     }
 
     // ─────────────────────────────────────────────
@@ -36,6 +37,14 @@ namespace DeliveryApp.API.Services
             await _hubContext.Clients
                 .Group($"user_{userId}")
                 .SendAsync(method, data);
+        }
+
+        public async Task DeleteChatMessages(int orderId)
+        {
+            // Since we don't have direct DB access in HubService easily without inject, 
+            // but we can call a method on the hub or just handle it in controller.
+            // Actually, HubService usually just sends messages. 
+            // Let's keep it simple and handle deletion in Controller.
         }
     }
 }

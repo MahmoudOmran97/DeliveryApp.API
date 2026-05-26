@@ -257,7 +257,7 @@ namespace DeliveryApp.API.Controllers
                     o.DeliveredAt,
                     Restaurant = new { o.Restaurant.Id, o.Restaurant.Name, o.Restaurant.ImageUrl, o.Restaurant.Phone },
                     CustomerName = o.Customer.FullName,
-                    CustomerPhone = o.Customer.Phone,
+                    // CustomerPhone = o.Customer.Phone, // Hidden as per requirement
                     Items = o.OrderItems.Select(i => new
                     {
                         i.Id,
@@ -429,6 +429,17 @@ namespace DeliveryApp.API.Controllers
 
             // ← إخطار العميل real-time عبر SignalR
             await _hubService.NotifyOrderStatusChanged(order.Id, dto.Status);
+
+            // If order is delivered, delete chat messages
+            if (dto.Status == "Delivered")
+            {
+                var messages = await _context.ChatMessages.Where(m => m.OrderId == order.Id).ToListAsync();
+                if (messages.Any())
+                {
+                    _context.ChatMessages.RemoveRange(messages);
+                    await _context.SaveChangesAsync();
+                }
+            }
 
             return Ok(new { message = "Status updated", order.Status });
         }

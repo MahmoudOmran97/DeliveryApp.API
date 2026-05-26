@@ -113,6 +113,66 @@ namespace DeliveryApp.API.Hubs
                 .SendAsync("OrderStatusChanged", new { orderId, status = newStatus });
         }
 
+        public async Task DeleteChatMessages(int orderId)
+        {
+            var messages = await _context.ChatMessages.Where(m => m.OrderId == orderId).ToListAsync();
+            if (messages.Any())
+            {
+                _context.ChatMessages.RemoveRange(messages);
+                await _context.SaveChangesAsync();
+            }
+        }
+
+        public async Task SendChatMessage(int orderId, string message)
+        {
+            var userId = GetUserId();
+            var order = await _context.Orders.FindAsync(orderId);
+
+            if (order == null || (order.CustomerId != userId && order.Driver?.UserId != userId))
+            {
+                await Clients.Caller.SendAsync("Error", "Unauthorized or order not found");
+                return;
+            }
+
+            var chatMsg = new ChatMessage
+            {
+                OrderId = orderId,
+                SenderId = userId,
+                Message = message,
+                Timestamp = DateTime.UtcNow
+            };
+
+            _context.ChatMessages.Add(chatMsg);
+            await _context.SaveChangesAsync();
+
+            await Clients.Group($"order_{orderId}").SendAsync("ChatMessageReceived", new
+            {
+                orderId,
+                senderId = userId,
+                message,
+                timestamp = chatMsg.Timestamp
+            });
+        }
+
+        public async Task StartVoiceCall(int orderId)
+        {
+            var userId = GetUserId();
+            var order = await _context.Orders.FindAsync(orderId);
+
+            if (order == null || (order.CustomerId != userId && order.Driver?.UserId != userId))
+            {
+                await Clients.Caller.SendAsync("Error", "Unauthorized or order not found");
+                return;
+            }
+
+            // Notify the other party about the incoming call
+            await Clients.Group($"order_{orderId}").SendAsync("IncomingVoiceCall", new
+            {
+                orderId,
+                callerId = userId
+            });
+        }
+
         // ─────────────────────────────────────────────
         // اتصل / انقطع
         // ─────────────────────────────────────────────
