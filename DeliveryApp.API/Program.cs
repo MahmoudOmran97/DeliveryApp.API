@@ -121,7 +121,7 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        // log only — don't crash the app
+        // log only ? don't crash the app
         Console.WriteLine($"[Startup] ChatMessages table check failed: {ex.Message}");
     }
 }
