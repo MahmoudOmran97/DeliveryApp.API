@@ -1,4 +1,4 @@
-﻿using DeliveryApp.API.Models;
+using DeliveryApp.API.Models;
 using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -206,6 +206,48 @@ namespace DeliveryApp.API.Controllers
                     RestaurantName = o.Restaurant.Name,
                     RestaurantImage = o.Restaurant.ImageUrl,
                     ItemCount = o.OrderItems.Count
+                })
+                .ToListAsync();
+
+            return Ok(new { total, page, pageSize, data = orders });
+        }
+
+        // ─────────────────────────────────────────────
+        // GET api/orders/driver/my
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Driver")]
+        [HttpGet("driver/my")]
+        public async Task<IActionResult> DriverMyOrders(
+            [FromQuery] string? status,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            var userId = GetUserId();
+            var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
+            if (driver == null) return NotFound(new { message = "Driver profile not found" });
+
+            var query = _context.Orders
+                .Where(o => o.DriverId == driver.Id)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(status))
+                query = query.Where(o => o.Status == status);
+
+            var total = await query.CountAsync();
+            var orders = await query
+                .OrderByDescending(o => o.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(o => new
+                {
+                    o.Id,
+                    o.Status,
+                    o.TotalAmount,
+                    o.DeliveryFee,
+                    o.DeliveryAddress,
+                    o.CreatedAt,
+                    o.DeliveredAt,
+                    RestaurantName = o.Restaurant.Name
                 })
                 .ToListAsync();
 
