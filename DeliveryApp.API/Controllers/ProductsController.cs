@@ -18,6 +18,8 @@ namespace DeliveryApp.API.Controllers
         public async Task<IActionResult> GetAllAdmin(
             [FromQuery] string? q,
             [FromQuery] int? restaurantId,
+            [FromQuery] int? categoryId,
+            [FromQuery] bool? isAvailable,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 50)
         {
@@ -30,6 +32,12 @@ namespace DeliveryApp.API.Controllers
 
             if (restaurantId.HasValue)
                 query = query.Where(p => p.Category.RestaurantId == restaurantId.Value);
+
+            if (categoryId.HasValue)
+                query = query.Where(p => p.CategoryId == categoryId.Value);
+
+            if (isAvailable.HasValue)
+                query = query.Where(p => p.IsAvailable == isAvailable.Value);
 
             var total = await query.CountAsync();
             var products = await query

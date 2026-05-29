@@ -90,42 +90,74 @@ namespace DeliveryApp.API.Controllers
         [HttpPost("admin")]
         public async Task<IActionResult> CreateUser([FromBody] AdminCreateUserDto dto)
         {
-            if (string.IsNullOrWhiteSpace(dto.Email) || string.IsNullOrWhiteSpace(dto.Password))
-                return BadRequest(new { message = "Email and password are required" });
+            // ── Validation ────────────────────────────────────────────────
+            if (dto == null)
+                return BadRequest(new { message = "Request body is required" });
+
+            if (string.IsNullOrWhiteSpace(dto.FullName))
+                return BadRequest(new { message = "Full name is required" });
+
+            if (string.IsNullOrWhiteSpace(dto.Email))
+                return BadRequest(new { message = "Email is required" });
+
+            if (string.IsNullOrWhiteSpace(dto.Password))
+                return BadRequest(new { message = "Password is required" });
+
+            if (dto.Password.Length < 6)
+                return BadRequest(new { message = "Password must be at least 6 characters" });
+
+            if (string.IsNullOrWhiteSpace(dto.Phone))
+                return BadRequest(new { message = "Phone is required" });
 
             var allowedRoles = new[] { "Admin", "Restaurant", "Driver", "Customer" };
-            if (!allowedRoles.Contains(dto.Role))
-                return BadRequest(new { message = "Invalid role" });
+            if (string.IsNullOrWhiteSpace(dto.Role) || !allowedRoles.Contains(dto.Role))
+                return BadRequest(new { message = $"Invalid role. Allowed: {string.Join(", ", allowedRoles)}" });
 
             if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
                 return BadRequest(new { message = "Email already exists" });
 
-            var user = new User
+            // ── Create user ───────────────────────────────────────────────
+            try
             {
-                FullName = dto.FullName,
-                Email = dto.Email,
-                Phone = dto.Phone,
-                Role = dto.Role,
-                Address = dto.Address,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow
-            };
+                var user = new User
+                {
+                    FullName = dto.FullName.Trim(),
+                    Email = dto.Email.Trim().ToLower(),
+                    Phone = dto.Phone.Trim(),
+                    Role = dto.Role,
+                    Address = dto.Address?.Trim(),
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
 
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
-
-            if (dto.Role == "Restaurant" && dto.RestaurantId.HasValue)
-            {
-                var restaurant = await _context.Restaurants.FindAsync(dto.RestaurantId.Value);
-                if (restaurant == null)
-                    return BadRequest(new { message = "Restaurant not found" });
-
-                restaurant.OwnerUserId = user.Id;
+                _context.Users.Add(user);
                 await _context.SaveChangesAsync();
-            }
 
-            return Ok(new { message = "User created", user.Id, user.FullName, user.Email, user.Role });
+                // Assign restaurant owner if role is Restaurant
+                if (dto.Role == "Restaurant" && dto.RestaurantId.HasValue)
+                {
+                    var restaurant = await _context.Restaurants.FindAsync(dto.RestaurantId.Value);
+                    if (restaurant == null)
+                        return BadRequest(new { message = "Restaurant not found" });
+
+                    restaurant.OwnerUserId = user.Id;
+                    await _context.SaveChangesAsync();
+                }
+
+                return Ok(new { message = "User created successfully", user.Id, user.FullName, user.Email, user.Role });
+            }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException dbEx)
+            {
+                var inner = dbEx.InnerException?.Message ?? dbEx.Message;
+                if (inner.Contains("UNIQUE") || inner.Contains("duplicate") || inner.Contains("unique"))
+                    return BadRequest(new { message = "Email already exists" });
+                return StatusCode(500, new { message = $"Database error: {inner}" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Unexpected error: {ex.InnerException?.Message ?? ex.Message}" });
+            }
         }
 
         // PUT api/user/{id}  [Admin]
@@ -134,33 +166,51 @@ namespace DeliveryApp.API.Controllers
         public async Task<IActionResult> UpdateUser(int id, [FromBody] AdminUpdateUserDto dto)
         {
             var user = await _context.Users.FindAsync(id);
-            if (user == null) return NotFound();
+            if (user == null) return NotFound(new { message = "User not found" });
 
-            if (!string.IsNullOrWhiteSpace(dto.FullName)) user.FullName = dto.FullName;
-            if (!string.IsNullOrWhiteSpace(dto.Phone)) user.Phone = dto.Phone;
-            if (dto.Address != null) user.Address = dto.Address;
-            if (!string.IsNullOrWhiteSpace(dto.Role)) user.Role = dto.Role;
-            if (dto.IsActive.HasValue) user.IsActive = dto.IsActive.Value;
-            if (!string.IsNullOrWhiteSpace(dto.Password))
-                user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
-
-            user.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-
-            if (dto.RestaurantId.HasValue && user.Role == "Restaurant")
+            try
             {
-                var oldRestaurants = await _context.Restaurants.Where(r => r.OwnerUserId == id).ToListAsync();
-                foreach (var r in oldRestaurants) r.OwnerUserId = null;
-
-                var restaurant = await _context.Restaurants.FindAsync(dto.RestaurantId.Value);
-                if (restaurant != null)
+                if (!string.IsNullOrWhiteSpace(dto.FullName)) user.FullName = dto.FullName.Trim();
+                if (!string.IsNullOrWhiteSpace(dto.Phone)) user.Phone = dto.Phone.Trim();
+                if (dto.Address != null) user.Address = dto.Address.Trim();
+                if (!string.IsNullOrWhiteSpace(dto.Role))
                 {
-                    restaurant.OwnerUserId = id;
-                    await _context.SaveChangesAsync();
+                    var allowedRoles = new[] { "Admin", "Restaurant", "Driver", "Customer" };
+                    if (!allowedRoles.Contains(dto.Role))
+                        return BadRequest(new { message = $"Invalid role. Allowed: {string.Join(", ", allowedRoles)}" });
+                    user.Role = dto.Role;
                 }
-            }
+                if (dto.IsActive.HasValue) user.IsActive = dto.IsActive.Value;
+                if (!string.IsNullOrWhiteSpace(dto.Password))
+                    user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
 
-            return Ok(new { message = "User updated" });
+                user.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+
+                if (dto.RestaurantId.HasValue && user.Role == "Restaurant")
+                {
+                    var oldRestaurants = await _context.Restaurants.Where(r => r.OwnerUserId == id).ToListAsync();
+                    foreach (var r in oldRestaurants) r.OwnerUserId = null;
+
+                    var restaurant = await _context.Restaurants.FindAsync(dto.RestaurantId.Value);
+                    if (restaurant != null)
+                    {
+                        restaurant.OwnerUserId = id;
+                        await _context.SaveChangesAsync();
+                    }
+                }
+
+                return Ok(new { message = "User updated successfully" });
+            }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException dbEx)
+            {
+                var inner = dbEx.InnerException?.Message ?? dbEx.Message;
+                return StatusCode(500, new { message = $"Database error: {inner}" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Unexpected error: {ex.InnerException?.Message ?? ex.Message}" });
+            }
         }
 
         // PUT api/user/{id}/toggle-active  [Admin]

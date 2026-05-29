@@ -1,4 +1,4 @@
-using DeliveryApp.API.Hubs;
+﻿using DeliveryApp.API.Hubs;
 using DeliveryApp.API.Models;
 using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -117,6 +117,41 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine($"[Startup] Restaurants OwnerUserId check failed: {ex.Message}");
     }
 
+    // ── Fix Role CHECK constraint ─────────────────────────────────────────
+    // Drop any old CHECK constraint on Role and recreate with correct values
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            DECLARE @constraintName NVARCHAR(200);
+            SELECT @constraintName = name 
+            FROM sys.check_constraints 
+            WHERE parent_object_id = OBJECT_ID('dbo.Users')
+              AND OBJECT_NAME(parent_object_id) = 'Users'
+              AND definition LIKE '%Role%';
+
+            IF @constraintName IS NOT NULL
+            BEGIN
+                -- Check if the constraint already allows 'Restaurant'
+                DECLARE @def NVARCHAR(500);
+                SELECT @def = definition 
+                FROM sys.check_constraints 
+                WHERE name = @constraintName;
+
+                IF @def NOT LIKE '%Restaurant%'
+                BEGIN
+                    EXEC('ALTER TABLE [dbo].[Users] DROP CONSTRAINT [' + @constraintName + ']');
+                    ALTER TABLE [dbo].[Users] ADD CONSTRAINT [CK_Users_Role]
+                        CHECK ([Role] IN ('Admin', 'Restaurant', 'Driver', 'Customer'));
+                END
+            END
+        ");
+        Console.WriteLine("[Startup] Role constraint check passed.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Startup] Role constraint fix failed: {ex.Message}");
+    }
+
     try
     {
         await db.Database.ExecuteSqlRawAsync(@"
@@ -150,6 +185,17 @@ using (var scope = app.Services.CreateScope())
 
 app.UseSwagger();
 app.UseSwaggerUI();
+
+// Global exception handler - returns JSON with message instead of HTML 500 page
+app.UseExceptionHandler(errApp => errApp.Run(async ctx =>
+{
+    ctx.Response.StatusCode = 500;
+    ctx.Response.ContentType = "application/json";
+    var feature = ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+    var msg = feature?.Error?.InnerException?.Message ?? feature?.Error?.Message ?? "Unexpected error";
+    await ctx.Response.WriteAsJsonAsync(new { message = $"Server error: {msg}" });
+}));
+
 app.UseHttpsRedirection();
 app.UseCors("AllowAll");
 app.UseAuthentication();
