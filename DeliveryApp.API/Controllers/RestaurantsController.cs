@@ -103,7 +103,11 @@ namespace DeliveryApp.API.Controllers
                     r.DeliveryFee,
                     r.MinOrderAmount,
                     r.EstimatedTime,
-                    r.IsOpen
+                    r.IsOpen,
+                    r.IsActive,
+                    r.OwnerUserId,
+                    OwnerName = r.Owner != null ? r.Owner.FullName : null,
+                    OwnerEmail = r.Owner != null ? r.Owner.Email : null
                 })
                 .FirstOrDefaultAsync();
 
@@ -244,11 +248,22 @@ namespace DeliveryApp.API.Controllers
                 EstimatedTime = dto.EstimatedTime,
                 IsOpen = true,
                 IsActive = true,
+                OwnerUserId = dto.OwnerUserId,
                 CreatedAt = DateTime.UtcNow
             };
 
             _context.Restaurants.Add(restaurant);
             await _context.SaveChangesAsync();
+
+            if (dto.OwnerUserId.HasValue)
+            {
+                var owner = await _context.Users.FindAsync(dto.OwnerUserId.Value);
+                if (owner != null && owner.Role != "Admin")
+                {
+                    owner.Role = "Restaurant";
+                    await _context.SaveChangesAsync();
+                }
+            }
 
             return CreatedAtAction(nameof(GetById),
                 new { id = restaurant.Id },
@@ -289,6 +304,13 @@ namespace DeliveryApp.API.Controllers
 
             if (!string.IsNullOrWhiteSpace(dto.CoverImageUrl))
                 restaurant.CoverImageUrl = dto.CoverImageUrl;
+
+            if (dto.OwnerUserId.HasValue)
+            {
+                restaurant.OwnerUserId = dto.OwnerUserId;
+                var owner = await _context.Users.FindAsync(dto.OwnerUserId.Value);
+                if (owner != null) owner.Role = "Restaurant";
+            }
 
             await _context.SaveChangesAsync();
 
@@ -349,6 +371,7 @@ namespace DeliveryApp.API.Controllers
         public decimal DeliveryFee { get; set; }
         public decimal MinOrderAmount { get; set; }
         public int EstimatedTime { get; set; } = 30;
+        public int? OwnerUserId { get; set; }
     }
 
     public class UpdateRestaurantDto
@@ -365,5 +388,6 @@ namespace DeliveryApp.API.Controllers
         public bool IsOpen { get; set; }
         public string? ImageUrl { get; set; }
         public string? CoverImageUrl { get; set; }
+        public int? OwnerUserId { get; set; }
     }
 }

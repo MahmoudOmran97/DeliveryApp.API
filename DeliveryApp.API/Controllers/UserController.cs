@@ -21,6 +21,186 @@ namespace DeliveryApp.API.Controllers
             return Convert.ToInt32(claim?.Value);
         }
 
+        // GET api/user/all  — كل المستخدمين (لوحة صاحب المنصة)
+        [Authorize(Roles = "Admin")]
+        [HttpGet("all")]
+        public async Task<IActionResult> GetAllUsers(
+            [FromQuery] string? role,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            var query = _context.Users.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(role))
+                query = query.Where(u => u.Role == role);
+
+            var total = await query.CountAsync();
+            var users = await query
+                .OrderByDescending(u => u.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(u => new
+                {
+                    u.Id,
+                    u.FullName,
+                    u.Email,
+                    u.Phone,
+                    u.Role,
+                    u.Address,
+                    u.ProfileImageUrl,
+                    u.IsActive,
+                    u.CreatedAt,
+                    RestaurantId = _context.Restaurants.Where(r => r.OwnerUserId == u.Id).Select(r => (int?)r.Id).FirstOrDefault(),
+                    RestaurantName = _context.Restaurants.Where(r => r.OwnerUserId == u.Id).Select(r => r.Name).FirstOrDefault()
+                })
+                .ToListAsync();
+
+            return Ok(new { total, page, pageSize, data = users });
+        }
+
+        // GET api/user/{id}  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> GetUserById(int id)
+        {
+            var user = await _context.Users
+                .Where(u => u.Id == id)
+                .Select(u => new
+                {
+                    u.Id,
+                    u.FullName,
+                    u.Email,
+                    u.Phone,
+                    u.Role,
+                    u.Address,
+                    u.ProfileImageUrl,
+                    u.IsActive,
+                    u.CreatedAt,
+                    RestaurantId = _context.Restaurants.Where(r => r.OwnerUserId == u.Id).Select(r => (int?)r.Id).FirstOrDefault(),
+                    RestaurantName = _context.Restaurants.Where(r => r.OwnerUserId == u.Id).Select(r => r.Name).FirstOrDefault()
+                })
+                .FirstOrDefaultAsync();
+
+            if (user == null) return NotFound();
+            return Ok(user);
+        }
+
+        // POST api/user/admin  — إنشاء مستخدم (Admin)
+        [Authorize(Roles = "Admin")]
+        [HttpPost("admin")]
+        public async Task<IActionResult> CreateUser([FromBody] AdminCreateUserDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Email) || string.IsNullOrWhiteSpace(dto.Password))
+                return BadRequest(new { message = "Email and password are required" });
+
+            var allowedRoles = new[] { "Admin", "Restaurant", "Driver", "Customer" };
+            if (!allowedRoles.Contains(dto.Role))
+                return BadRequest(new { message = "Invalid role" });
+
+            if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
+                return BadRequest(new { message = "Email already exists" });
+
+            var user = new User
+            {
+                FullName = dto.FullName,
+                Email = dto.Email,
+                Phone = dto.Phone,
+                Role = dto.Role,
+                Address = dto.Address,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.Users.Add(user);
+            await _context.SaveChangesAsync();
+
+            if (dto.Role == "Restaurant" && dto.RestaurantId.HasValue)
+            {
+                var restaurant = await _context.Restaurants.FindAsync(dto.RestaurantId.Value);
+                if (restaurant == null)
+                    return BadRequest(new { message = "Restaurant not found" });
+
+                restaurant.OwnerUserId = user.Id;
+                await _context.SaveChangesAsync();
+            }
+
+            return Ok(new { message = "User created", user.Id, user.FullName, user.Email, user.Role });
+        }
+
+        // PUT api/user/{id}  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpPut("{id:int}")]
+        public async Task<IActionResult> UpdateUser(int id, [FromBody] AdminUpdateUserDto dto)
+        {
+            var user = await _context.Users.FindAsync(id);
+            if (user == null) return NotFound();
+
+            if (!string.IsNullOrWhiteSpace(dto.FullName)) user.FullName = dto.FullName;
+            if (!string.IsNullOrWhiteSpace(dto.Phone)) user.Phone = dto.Phone;
+            if (dto.Address != null) user.Address = dto.Address;
+            if (!string.IsNullOrWhiteSpace(dto.Role)) user.Role = dto.Role;
+            if (dto.IsActive.HasValue) user.IsActive = dto.IsActive.Value;
+            if (!string.IsNullOrWhiteSpace(dto.Password))
+                user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
+
+            user.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            if (dto.RestaurantId.HasValue && user.Role == "Restaurant")
+            {
+                var oldRestaurants = await _context.Restaurants.Where(r => r.OwnerUserId == id).ToListAsync();
+                foreach (var r in oldRestaurants) r.OwnerUserId = null;
+
+                var restaurant = await _context.Restaurants.FindAsync(dto.RestaurantId.Value);
+                if (restaurant != null)
+                {
+                    restaurant.OwnerUserId = id;
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            return Ok(new { message = "User updated" });
+        }
+
+        // PUT api/user/{id}/toggle-active  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpPut("{id:int}/toggle-active")]
+        public async Task<IActionResult> ToggleActive(int id)
+        {
+            var user = await _context.Users.FindAsync(id);
+            if (user == null) return NotFound();
+
+            user.IsActive = !user.IsActive;
+            user.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = user.IsActive ? "User activated" : "User deactivated", user.IsActive });
+        }
+
+        // PUT api/user/{id}/assign-restaurant/{restaurantId}  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpPut("{id:int}/assign-restaurant/{restaurantId:int}")]
+        public async Task<IActionResult> AssignRestaurant(int id, int restaurantId)
+        {
+            var user = await _context.Users.FindAsync(id);
+            if (user == null) return NotFound(new { message = "User not found" });
+            if (user.Role != "Restaurant")
+                return BadRequest(new { message = "User must have Restaurant role" });
+
+            var restaurant = await _context.Restaurants.FindAsync(restaurantId);
+            if (restaurant == null) return NotFound(new { message = "Restaurant not found" });
+
+            var previous = await _context.Restaurants.Where(r => r.OwnerUserId == id && r.Id != restaurantId).ToListAsync();
+            foreach (var r in previous) r.OwnerUserId = null;
+
+            restaurant.OwnerUserId = id;
+            user.Role = "Restaurant";
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Restaurant assigned to owner", restaurantId, userId = id });
+        }
+
         // GET api/user/me
         [HttpGet("me")]
         public async Task<IActionResult> Me()
@@ -121,4 +301,26 @@ namespace DeliveryApp.API.Controllers
 
     public class UpdateFcmDto { public string Token { get; set; } = string.Empty; }
     public class DeleteAccountDto { public string Password { get; set; } = string.Empty; }
+
+    public class AdminCreateUserDto
+    {
+        public string FullName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string Phone { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public string Role { get; set; } = "Customer";
+        public string? Address { get; set; }
+        public int? RestaurantId { get; set; }
+    }
+
+    public class AdminUpdateUserDto
+    {
+        public string? FullName { get; set; }
+        public string? Phone { get; set; }
+        public string? Address { get; set; }
+        public string? Role { get; set; }
+        public string? Password { get; set; }
+        public bool? IsActive { get; set; }
+        public int? RestaurantId { get; set; }
+    }
 }

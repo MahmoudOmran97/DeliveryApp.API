@@ -118,6 +118,141 @@ namespace DeliveryApp.API.Controllers
         }
 
         // ─────────────────────────────────────────────
+        // GET api/orders/admin/settlements — حسابات السائقين والمطاعم
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Admin")]
+        [HttpGet("admin/settlements")]
+        public async Task<IActionResult> GetSettlements(
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to,
+            [FromQuery] int? driverId,
+            [FromQuery] int? restaurantId)
+        {
+            var fromDate = (from ?? DateTime.UtcNow.AddDays(-30)).Date;
+            var toDate = (to ?? DateTime.UtcNow).Date.AddDays(1).AddTicks(-1);
+
+            var query = _context.Orders
+                .Where(o => o.Status == "Delivered")
+                .Where(o => (o.DeliveredAt ?? o.CreatedAt) >= fromDate && (o.DeliveredAt ?? o.CreatedAt) <= toDate);
+
+            if (driverId.HasValue)
+                query = query.Where(o => o.DriverId == driverId);
+
+            if (restaurantId.HasValue)
+                query = query.Where(o => o.RestaurantId == restaurantId);
+
+            var orders = await query
+                .Select(o => new
+                {
+                    o.Id,
+                    o.DriverId,
+                    DriverName = o.Driver != null ? o.Driver.User.FullName : null,
+                    o.RestaurantId,
+                    RestaurantName = o.Restaurant.Name,
+                    o.SubTotal,
+                    o.DeliveryFee,
+                    o.Discount,
+                    o.TotalAmount,
+                    o.PaymentMethod,
+                    o.PaymentStatus,
+                    DeliveredAt = o.DeliveredAt ?? o.CreatedAt
+                })
+                .ToListAsync();
+
+            var drivers = orders
+                .Where(o => o.DriverId.HasValue)
+                .GroupBy(o => new { o.DriverId, o.DriverName })
+                .Select(g => new
+                {
+                    DriverId = g.Key.DriverId!.Value,
+                    DriverName = g.Key.DriverName ?? "Unknown",
+                    OrderCount = g.Count(),
+                    CashCollected = g.Where(o => o.PaymentMethod == "Cash").Sum(o => o.TotalAmount),
+                    DeliveryEarnings = g.Sum(o => o.DeliveryFee),
+                    RestaurantDue = g.Sum(o => o.SubTotal - o.Discount),
+                    CardOrders = g.Count(o => o.PaymentMethod != "Cash"),
+                    CashOrders = g.Count(o => o.PaymentMethod == "Cash")
+                })
+                .OrderByDescending(d => d.OrderCount)
+                .ToList();
+
+            var restaurants = orders
+                .GroupBy(o => new { o.RestaurantId, o.RestaurantName })
+                .Select(g => new
+                {
+                    RestaurantId = g.Key.RestaurantId,
+                    RestaurantName = g.Key.RestaurantName,
+                    OrderCount = g.Count(),
+                    PayoutAmount = g.Sum(o => o.SubTotal - o.Discount),
+                    TotalSales = g.Sum(o => o.TotalAmount),
+                    DeliveryFees = g.Sum(o => o.DeliveryFee),
+                    CashOrders = g.Count(o => o.PaymentMethod == "Cash"),
+                    CardOrders = g.Count(o => o.PaymentMethod != "Cash")
+                })
+                .OrderByDescending(r => r.PayoutAmount)
+                .ToList();
+
+            return Ok(new
+            {
+                from = fromDate,
+                to = toDate,
+                summary = new
+                {
+                    TotalOrders = orders.Count,
+                    TotalRevenue = orders.Sum(o => o.TotalAmount),
+                    TotalRestaurantPayout = orders.Sum(o => o.SubTotal - o.Discount),
+                    TotalDeliveryFees = orders.Sum(o => o.DeliveryFee),
+                    TotalCashCollected = orders.Where(o => o.PaymentMethod == "Cash").Sum(o => o.TotalAmount)
+                },
+                drivers,
+                restaurants
+            });
+        }
+
+        // ─────────────────────────────────────────────
+        // GET api/orders/admin  — كل الطلبات (لوحة صاحب المنصة)
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Admin")]
+        [HttpGet("admin")]
+        public async Task<IActionResult> GetAllAdmin(
+            [FromQuery] string? status,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            var query = _context.Orders.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(status))
+                query = query.Where(o => o.Status == status);
+
+            var total = await query.CountAsync();
+            var orders = await query
+                .OrderByDescending(o => o.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(o => new
+                {
+                    o.Id,
+                    o.Status,
+                    CustomerName = o.Customer.FullName,
+                    RestaurantName = o.Restaurant.Name,
+                    o.SubTotal,
+                    o.DeliveryFee,
+                    o.Discount,
+                    o.TotalAmount,
+                    o.PaymentMethod,
+                    o.PaymentStatus,
+                    o.DeliveryAddress,
+                    o.DeliveryNotes,
+                    ItemCount = o.OrderItems.Count,
+                    o.CreatedAt,
+                    o.DeliveredAt
+                })
+                .ToListAsync();
+
+            return Ok(new { total, page, pageSize, data = orders });
+        }
+
+        // ─────────────────────────────────────────────
         // GET api/orders/{id}
         // ─────────────────────────────────────────────
         [HttpGet("{id}")]

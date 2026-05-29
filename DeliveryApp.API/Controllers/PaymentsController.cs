@@ -122,6 +122,38 @@ namespace DeliveryApp.API.Controllers
         }
 
         // ─────────────────────────────────────────────
+        // GET api/payments/admin  — كل المدفوعات (لوحة صاحب المنصة)
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Admin")]
+        [HttpGet("admin")]
+        public async Task<IActionResult> GetAllAdmin(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            var total = await _context.Payments.CountAsync();
+            var payments = await _context.Payments
+                .OrderByDescending(p => p.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(p => new
+                {
+                    p.Id,
+                    p.OrderId,
+                    p.Provider,
+                    p.Amount,
+                    p.Currency,
+                    p.Status,
+                    p.TransactionId,
+                    p.PaidAt,
+                    p.CreatedAt,
+                    RestaurantName = p.Order.Restaurant.Name
+                })
+                .ToListAsync();
+
+            return Ok(new { total, page, pageSize, data = payments });
+        }
+
+        // ─────────────────────────────────────────────
         // GET api/payments/history  — سجل مدفوعات العميل
         // ─────────────────────────────────────────────
         [HttpGet("history")]

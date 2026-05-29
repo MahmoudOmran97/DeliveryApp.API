@@ -251,6 +251,45 @@ namespace DeliveryApp.API.Controllers
         }
 
         // ─────────────────────────────────────────────
+        // GET api/drivers/admin  — كل الطيارين (لوحة صاحب المنصة)
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Admin")]
+        [HttpGet("admin")]
+        public async Task<IActionResult> GetAllAdmin(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50)
+        {
+            var total = await _context.Drivers.CountAsync();
+            var drivers = await _context.Drivers
+                .OrderByDescending(d => d.JoinedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(d => new
+                {
+                    d.Id,
+                    d.UserId,
+                    UserName = d.User.FullName,
+                    FullName = d.User.FullName,
+                    Email = d.User.Email,
+                    d.VehicleType,
+                    d.LicensePlate,
+                    d.NationalId,
+                    d.Rating,
+                    d.TotalRatings,
+                    d.TotalDeliveries,
+                    d.IsOnline,
+                    d.IsAvailable,
+                    d.IsVerified,
+                    d.CurrentLatitude,
+                    d.CurrentLongitude,
+                    d.JoinedAt
+                })
+                .ToListAsync();
+
+            return Ok(new { total, page, pageSize, data = drivers });
+        }
+
+        // ─────────────────────────────────────────────
         // PUT api/drivers/{id}/verify  [Admin]
         // ─────────────────────────────────────────────
         [Authorize(Roles = "Admin")]

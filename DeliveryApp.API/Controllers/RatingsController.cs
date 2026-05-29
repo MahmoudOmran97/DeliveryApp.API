@@ -1,4 +1,5 @@
 ﻿using DeliveryApp.API.Models;
+using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -79,6 +80,35 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { message = "Thank you for your rating!" });
         }
 
+        // GET api/ratings/admin  — كل التقييمات (لوحة صاحب المنصة)
+        [Authorize(Roles = "Admin")]
+        [HttpGet("admin")]
+        public async Task<IActionResult> GetAllAdmin(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            var total = await _context.Ratings.CountAsync();
+            var ratings = await _context.Ratings
+                .OrderByDescending(r => r.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(r => new
+                {
+                    r.Id,
+                    CustomerName = r.Customer.FullName,
+                    RestaurantName = r.Restaurant.Name,
+                    DriverName = r.Driver != null ? r.Driver.User.FullName : null,
+                    r.RestaurantRating,
+                    r.FoodRating,
+                    DriverRating = r.DriverRating.HasValue ? (double?)r.DriverRating.Value : null,
+                    r.Comment,
+                    r.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(new { total, page, pageSize, data = ratings });
+        }
+
         // GET api/ratings/driver/{driverId}  — تقييمات الطيار
         [HttpGet("driver/{driverId}")]
         public async Task<IActionResult> GetDriverRatings(int driverId,
@@ -111,7 +141,13 @@ namespace DeliveryApp.API.Controllers
     public class NotificationsController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
-        public NotificationsController(ApplicationDbContext context) => _context = context;
+        private readonly IHubService _hubService;
+
+        public NotificationsController(ApplicationDbContext context, IHubService hubService)
+        {
+            _context = context;
+            _hubService = hubService;
+        }
 
         private int GetUserId() =>
             int.Parse(User.Claims.First(c => c.Type == ClaimTypes.NameIdentifier
@@ -152,6 +188,67 @@ namespace DeliveryApp.API.Controllers
                 .ToListAsync();
 
             return Ok(new { total, unread, page, pageSize, data = notifications });
+        }
+
+        // POST api/notifications/send  [Admin]
+        [Authorize(Roles = "Admin")]
+        [HttpPost("send")]
+        public async Task<IActionResult> Send([FromBody] SendNotificationDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Title) || string.IsNullOrWhiteSpace(dto.Body))
+                return BadRequest(new { message = "Title and body are required" });
+
+            List<User> targets;
+
+            if (dto.UserId.HasValue)
+            {
+                var user = await _context.Users.FindAsync(dto.UserId.Value);
+                if (user == null) return NotFound(new { message = "User not found" });
+                targets = new List<User> { user };
+            }
+            else if (!string.IsNullOrWhiteSpace(dto.Role))
+            {
+                targets = await _context.Users
+                    .Where(u => u.IsActive && u.Role == dto.Role)
+                    .ToListAsync();
+            }
+            else
+            {
+                return BadRequest(new { message = "Provide UserId or Role" });
+            }
+
+            if (!targets.Any())
+                return BadRequest(new { message = "No recipients found" });
+
+            var type = string.IsNullOrWhiteSpace(dto.Type) ? "General" : dto.Type;
+            var now = DateTime.UtcNow;
+            var sent = 0;
+
+            foreach (var user in targets)
+            {
+                _context.Notifications.Add(new Notification
+                {
+                    UserId = user.Id,
+                    Title = dto.Title,
+                    Body = dto.Body,
+                    Type = type,
+                    OrderId = dto.OrderId,
+                    IsRead = false,
+                    CreatedAt = now
+                });
+
+                await _hubService.NotifyUserDirectly(user.Id, "NotificationReceived", new
+                {
+                    dto.Title,
+                    dto.Body,
+                    Type = type,
+                    dto.OrderId
+                });
+                sent++;
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = $"Notification sent to {sent} user(s)", count = sent });
         }
 
         // PUT api/notifications/{id}/read  — تحديد نوتيفيكيشن كمقروء
@@ -217,5 +314,15 @@ namespace DeliveryApp.API.Controllers
         public int? DriverRating { get; set; }
         public int? FoodRating { get; set; }
         public string? Comment { get; set; }
+    }
+
+    public class SendNotificationDto
+    {
+        public int? UserId { get; set; }
+        public string? Role { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Body { get; set; } = string.Empty;
+        public string? Type { get; set; }
+        public int? OrderId { get; set; }
     }
 }

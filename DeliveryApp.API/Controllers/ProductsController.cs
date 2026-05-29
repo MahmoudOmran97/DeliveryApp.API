@@ -12,12 +12,30 @@ namespace DeliveryApp.API.Controllers
         private readonly ApplicationDbContext _context;
         public ProductsController(ApplicationDbContext context) => _context = context;
 
-        // GET api/products/{id}
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetById(int id)
+        // GET api/products/admin  — كل المنتجات (لوحة صاحب المنصة)
+        [Authorize(Roles = "Admin")]
+        [HttpGet("admin")]
+        public async Task<IActionResult> GetAllAdmin(
+            [FromQuery] string? q,
+            [FromQuery] int? restaurantId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50)
         {
-            var product = await _context.Products
-                .Where(p => p.Id == id && p.IsActive)
+            var query = _context.Products
+                .Where(p => p.IsActive)
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(q))
+                query = query.Where(p => p.Name.Contains(q) || (p.Description != null && p.Description.Contains(q)));
+
+            if (restaurantId.HasValue)
+                query = query.Where(p => p.Category.RestaurantId == restaurantId.Value);
+
+            var total = await query.CountAsync();
+            var products = await query
+                .OrderByDescending(p => p.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .Select(p => new
                 {
                     p.Id,
@@ -29,13 +47,13 @@ namespace DeliveryApp.API.Controllers
                     p.PreparationTime,
                     p.Calories,
                     p.IsAvailable,
-                    Category = new { p.Category.Id, p.Category.Name },
-                    RestaurantId = p.Category.RestaurantId
+                    CategoryName = p.Category.Name,
+                    RestaurantId = p.Category.RestaurantId,
+                    RestaurantName = p.Category.Restaurant.Name
                 })
-                .FirstOrDefaultAsync();
+                .ToListAsync();
 
-            if (product == null) return NotFound(new { message = "Product not found" });
-            return Ok(product);
+            return Ok(new { total, page, pageSize, data = products });
         }
 
         // GET api/products/search?q=kofta&restaurantId=1
@@ -78,6 +96,32 @@ namespace DeliveryApp.API.Controllers
                 .ToListAsync();
 
             return Ok(new { total, page, pageSize, data = products });
+        }
+
+        // GET api/products/{id}
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> GetById(int id)
+        {
+            var product = await _context.Products
+                .Where(p => p.Id == id && p.IsActive)
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    p.Description,
+                    p.Price,
+                    p.DiscountedPrice,
+                    p.ImageUrl,
+                    p.PreparationTime,
+                    p.Calories,
+                    p.IsAvailable,
+                    Category = new { p.Category.Id, p.Category.Name },
+                    RestaurantId = p.Category.RestaurantId
+                })
+                .FirstOrDefaultAsync();
+
+            if (product == null) return NotFound(new { message = "Product not found" });
+            return Ok(product);
         }
 
         // POST api/products  [Admin or Restaurant Desktop]

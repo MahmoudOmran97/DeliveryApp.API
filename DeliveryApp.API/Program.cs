@@ -99,6 +99,28 @@ using (var scope = app.Services.CreateScope())
     {
         await db.Database.ExecuteSqlRawAsync(@"
             IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'Restaurants' AND COLUMN_NAME = 'OwnerUserId'
+            )
+            BEGIN
+                ALTER TABLE [dbo].[Restaurants] ADD [OwnerUserId] INT NULL;
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Restaurants_OwnerUser'
+                )
+                ALTER TABLE [dbo].[Restaurants] ADD CONSTRAINT [FK_Restaurants_OwnerUser]
+                    FOREIGN KEY ([OwnerUserId]) REFERENCES [Users]([Id]);
+            END
+        ");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Startup] Restaurants OwnerUserId check failed: {ex.Message}");
+    }
+
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (
                 SELECT 1 FROM INFORMATION_SCHEMA.TABLES
                 WHERE TABLE_NAME = 'ChatMessages'
             )

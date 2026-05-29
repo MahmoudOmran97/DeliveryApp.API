@@ -49,7 +49,13 @@ public partial class Restaurant
 
     public bool IsActive { get; set; }
 
+    public int? OwnerUserId { get; set; }
+
     public DateTime CreatedAt { get; set; }
+
+    [ForeignKey("OwnerUserId")]
+    [InverseProperty("OwnedRestaurants")]
+    public virtual User? Owner { get; set; }
 
     [InverseProperty("Restaurant")]
     public virtual ICollection<Category> Categories { get; set; } = new List<Category>();
