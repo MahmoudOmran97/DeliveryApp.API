@@ -122,12 +122,12 @@ namespace DeliveryApp.API.Controllers
                 var user = new User
                 {
                     FullName = dto.FullName.Trim(),
-                    Email = dto.Email.Trim().ToLower(),
-                    Phone = dto.Phone.Trim(),
-                    Role = dto.Role,
-                    Address = dto.Address?.Trim(),
+                    Email    = dto.Email.Trim().ToLower(),
+                    Phone    = dto.Phone.Trim(),
+                    Role     = dto.Role,
+                    Address  = dto.Address?.Trim(),
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
-                    IsActive = true,
+                    IsActive  = true,
                     CreatedAt = DateTime.UtcNow
                 };
 
@@ -171,8 +171,8 @@ namespace DeliveryApp.API.Controllers
             try
             {
                 if (!string.IsNullOrWhiteSpace(dto.FullName)) user.FullName = dto.FullName.Trim();
-                if (!string.IsNullOrWhiteSpace(dto.Phone)) user.Phone = dto.Phone.Trim();
-                if (dto.Address != null) user.Address = dto.Address.Trim();
+                if (!string.IsNullOrWhiteSpace(dto.Phone))    user.Phone    = dto.Phone.Trim();
+                if (dto.Address != null)                       user.Address  = dto.Address.Trim();
                 if (!string.IsNullOrWhiteSpace(dto.Role))
                 {
                     var allowedRoles = new[] { "Admin", "Restaurant", "Driver", "Customer" };
