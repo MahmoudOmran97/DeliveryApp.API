@@ -1,4 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using System.Reflection;
+using static Azure.Core.HttpHeader;
 
 namespace DeliveryApp.API.Models;
 
@@ -37,6 +39,9 @@ public partial class ApplicationDbContext : DbContext
 
 
     public virtual DbSet<ChatMessage> ChatMessages { get; set; }
+    public virtual DbSet<Banner> Banners { get; set; }
+    public virtual DbSet<Coupon> Coupons { get; set; }
+    public virtual DbSet<Deal> Deals { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

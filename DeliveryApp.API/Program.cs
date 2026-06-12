@@ -181,6 +181,106 @@ using (var scope = app.Services.CreateScope())
         // log only ? don't crash the app
         Console.WriteLine($"[Startup] ChatMessages table check failed: {ex.Message}");
     }
+    // ── Create Banners table ──────────────────────────────────────────────────
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Banners')
+            BEGIN
+                CREATE TABLE [dbo].[Banners] (
+                    [Id]              INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [Title]           NVARCHAR(200)  NOT NULL,
+                    [SubTitle]        NVARCHAR(500)  NULL,
+                    [ImageUrl]        NVARCHAR(500)  NULL,
+                    [ActionUrl]       NVARCHAR(300)  NULL,
+                    [BackgroundColor] NVARCHAR(50)   NULL,
+                    [SortOrder]       INT            NOT NULL DEFAULT 0,
+                    [IsActive]        BIT            NOT NULL DEFAULT 1,
+                    [StartsAt]        DATETIME2      NULL,
+                    [EndsAt]          DATETIME2      NULL,
+                    [CreatedAt]       DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+                );
+                -- Seed sample banners
+                INSERT INTO [dbo].[Banners] ([Title],[SubTitle],[ImageUrl],[BackgroundColor],[SortOrder],[IsActive])
+                VALUES 
+                (N'اطلب وادخر', N'أفضل عروض المطاعم بين إيدك', NULL, '#FF5722', 1, 1),
+                (N'توصيل سريع', N'توصيل لحد بيتك في أقل من 30 دقيقة', NULL, '#6200EA', 2, 1),
+                (N'عروض خاصة', N'خصومات حصرية على منتجات مختارة', NULL, '#00897B', 3, 1);
+            END
+        ");
+        Console.WriteLine("[Startup] Banners table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Banners table check failed: {ex.Message}"); }
+
+    // ── Create Coupons table ──────────────────────────────────────────────────
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Coupons')
+            BEGIN
+                CREATE TABLE [dbo].[Coupons] (
+                    [Id]              INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [Code]            NVARCHAR(50)   NOT NULL UNIQUE,
+                    [Title]           NVARCHAR(200)  NOT NULL,
+                    [Description]     NVARCHAR(500)  NULL,
+                    [DiscountType]    NVARCHAR(20)   NOT NULL DEFAULT 'Fixed',
+                    [DiscountValue]   DECIMAL(10,2)  NOT NULL,
+                    [MinOrderAmount]  DECIMAL(10,2)  NULL,
+                    [MaxDiscount]     DECIMAL(10,2)  NULL,
+                    [RestaurantId]    INT            NULL,
+                    [UsageLimit]      INT            NULL,
+                    [UsedCount]       INT            NOT NULL DEFAULT 0,
+                    [IsActive]        BIT            NOT NULL DEFAULT 1,
+                    [ExpiresAt]       DATETIME2      NULL,
+                    [CreatedAt]       DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+                );
+                -- Seed sample coupons
+                INSERT INTO [dbo].[Coupons] ([Code],[Title],[Description],[DiscountType],[DiscountValue],[MinOrderAmount],[IsActive],[ExpiresAt])
+                VALUES 
+                (N'SAVE20', N'خصم 20 جنيه', N'خصم 20 جنيه على أي طلب فوق 100 جنيه', 'Fixed', 20, 100, 1, DATEADD(MONTH,3,GETUTCDATE())),
+                (N'FIRST50', N'خصم 50% للمرة الأولى', N'خصم 50% على أول طلب لك', 'Percentage', 50, 50, 1, DATEADD(MONTH,1,GETUTCDATE())),
+                (N'FREE', N'توصيل مجاني', N'احصل على توصيل مجاني لأي طلب', 'Fixed', 15, 80, 1, DATEADD(MONTH,2,GETUTCDATE()));
+            END
+        ");
+        Console.WriteLine("[Startup] Coupons table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Coupons table check failed: {ex.Message}"); }
+
+    // ── Create Deals table ────────────────────────────────────────────────────
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Deals')
+            BEGIN
+                CREATE TABLE [dbo].[Deals] (
+                    [Id]              INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [Title]           NVARCHAR(200)  NOT NULL,
+                    [Description]     NVARCHAR(500)  NULL,
+                    [ImageUrl]        NVARCHAR(500)  NULL,
+                    [RestaurantId]    INT            NULL,
+                    [ProductId]       INT            NULL,
+                    [OriginalPrice]   DECIMAL(10,2)  NULL,
+                    [DiscountedPrice] DECIMAL(10,2)  NULL,
+                    [DiscountPercent] INT            NULL,
+                    [BadgeText]       NVARCHAR(50)   NULL,
+                    [BadgeColor]      NVARCHAR(50)   NULL,
+                    [IsActive]        BIT            NOT NULL DEFAULT 1,
+                    [SortOrder]       INT            NOT NULL DEFAULT 0,
+                    [ExpiresAt]       DATETIME2      NULL,
+                    [CreatedAt]       DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+                );
+                -- Seed sample deals
+                INSERT INTO [dbo].[Deals] ([Title],[Description],[OriginalPrice],[DiscountedPrice],[DiscountPercent],[BadgeText],[BadgeColor],[IsActive],[SortOrder])
+                VALUES 
+                (N'وجبة برجر ممتازة', N'برجر مع بطاطس ومشروب', 89, 59, 34, N'خصم 34%', N'#F44336', 1, 1),
+                (N'بيتزا كبيرة', N'بيتزا كبيرة أي نوع', 120, 85, 29, N'خصم 29%', N'#FF9800', 1, 2),
+                (N'وجبة شاورما', N'شاورما دجاج مع إضافات', 65, 45, 31, N'عرض محدود', N'#4CAF50', 1, 3),
+                (N'سندوتش فراخ مقرمش', N'مع صوص خاص وبطاطس', 55, 39, 29, N'خصم 29%', N'#9C27B0', 1, 4);
+            END
+        ");
+        Console.WriteLine("[Startup] Deals table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Deals table check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();
