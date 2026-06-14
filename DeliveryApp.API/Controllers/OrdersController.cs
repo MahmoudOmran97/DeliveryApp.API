@@ -60,6 +60,44 @@ namespace DeliveryApp.API.Controllers
 
             var subTotal = orderItems.Sum(i => i.UnitPrice * i.Quantity);
             var total = subTotal + restaurant.DeliveryFee;
+            decimal discount = 0;
+
+            // Apply coupon if provided
+            if (!string.IsNullOrWhiteSpace(dto.CouponCode) || dto.CouponId.HasValue)
+            {
+                Coupon? coupon = null;
+                if (dto.CouponId.HasValue)
+                    coupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Id == dto.CouponId);
+                else if (!string.IsNullOrWhiteSpace(dto.CouponCode))
+                    coupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Code == dto.CouponCode.ToUpper());
+
+                if (coupon != null && coupon.IsActive && (coupon.ExpiresAt == null || coupon.ExpiresAt > DateTime.UtcNow))
+                {
+                    // Check minimum order amount
+                    if (coupon.MinOrderAmount == null || subTotal >= coupon.MinOrderAmount)
+                    {
+                        // Check usage limit
+                        if (coupon.UsageLimit == null || coupon.UsedCount < coupon.UsageLimit)
+                        {
+                            // Calculate discount
+                            if (coupon.DiscountType == "Percentage")
+                                discount = (subTotal * coupon.DiscountValue) / 100;
+                            else
+                                discount = coupon.DiscountValue;
+
+                            // Apply max discount cap if set
+                            if (coupon.MaxDiscount.HasValue && discount > coupon.MaxDiscount)
+                                discount = coupon.MaxDiscount.Value;
+
+                            // Increment usage count
+                            coupon.UsedCount++;
+                            _context.Coupons.Update(coupon);
+                        }
+                    }
+                }
+            }
+
+            total = subTotal + restaurant.DeliveryFee - discount;
 
             if (total < restaurant.MinOrderAmount)
                 return BadRequest(new { message = $"Minimum order is {restaurant.MinOrderAmount} EGP" });
@@ -71,7 +109,7 @@ namespace DeliveryApp.API.Controllers
                 Status = "Pending",
                 SubTotal = subTotal,
                 DeliveryFee = restaurant.DeliveryFee,
-                Discount = 0,
+                Discount = discount,
                 TotalAmount = total,
                 DeliveryAddress = dto.DeliveryAddress,
                 DeliveryLatitude = dto.DeliveryLatitude,
@@ -692,6 +730,8 @@ namespace DeliveryApp.API.Controllers
         public double DeliveryLongitude { get; set; }
         public string? DeliveryNotes { get; set; }
         public string PaymentMethod { get; set; } = "Cash";
+        public string? CouponCode { get; set; }
+        public int? CouponId { get; set; }
     }
 
     public class OrderItemDto
