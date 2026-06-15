@@ -49,7 +49,7 @@ public partial class Restaurant
     /// نوع المحل: Restaurant | Pharmacy | Grocery | Supermarket | Vegetables | Drinks | Accessories
     /// </summary>
     [StringLength(50)]
-    public string StoreType { get; set; } = "Restaurant";
+    public string StoreType { get; set; } = "Restaurants";
 
     public bool IsOpen { get; set; }
 

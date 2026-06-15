@@ -314,6 +314,31 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] Deals table ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] Deals table check failed: {ex.Message}"); }
+
+    // ── Add StoreType column to Restaurants ───────────────────────────────────
+    // القيم: Restaurants | Pharmacy | Grocery | Supermarket | Vegetables | Drinks | Accessories
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'Restaurants' AND COLUMN_NAME = 'StoreType'
+            )
+            BEGIN
+                ALTER TABLE [dbo].[Restaurants]
+                ADD [StoreType] NVARCHAR(50) NOT NULL DEFAULT 'Restaurants';
+            END
+            ELSE
+            BEGIN
+                -- صلّح الـ rows القديمة اللي اتضافت بـ default غلط 'Restaurant' (مفرد)
+                UPDATE [dbo].[Restaurants]
+                SET [StoreType] = 'Restaurants'
+                WHERE [StoreType] = 'Restaurant';
+            END
+        ");
+        Console.WriteLine("[Startup] Restaurants.StoreType column ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] StoreType column check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();
