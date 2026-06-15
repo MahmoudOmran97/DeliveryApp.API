@@ -42,6 +42,7 @@ public partial class ApplicationDbContext : DbContext
     public virtual DbSet<Banner> Banners { get; set; }
     public virtual DbSet<Coupon> Coupons { get; set; }
     public virtual DbSet<Deal> Deals { get; set; }
+    public virtual DbSet<UserCoupon> UserCoupons { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

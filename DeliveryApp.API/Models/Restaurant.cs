@@ -45,6 +45,12 @@ public partial class Restaurant
 
     public int EstimatedTime { get; set; }
 
+    /// <summary>
+    /// نوع المحل: Restaurant | Pharmacy | Grocery | Supermarket | Vegetables | Drinks | Accessories
+    /// </summary>
+    [StringLength(50)]
+    public string StoreType { get; set; } = "Restaurant";
+
     public bool IsOpen { get; set; }
 
     public bool IsActive { get; set; }

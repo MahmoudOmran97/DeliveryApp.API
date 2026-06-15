@@ -63,35 +63,48 @@ namespace DeliveryApp.API.Controllers
             decimal discount = 0;
 
             // Apply coupon if provided
+            Coupon? appliedCoupon = null;
             if (!string.IsNullOrWhiteSpace(dto.CouponCode) || dto.CouponId.HasValue)
             {
-                Coupon? coupon = null;
                 if (dto.CouponId.HasValue)
-                    coupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Id == dto.CouponId);
+                    appliedCoupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Id == dto.CouponId);
                 else if (!string.IsNullOrWhiteSpace(dto.CouponCode))
-                    coupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Code == dto.CouponCode.ToUpper());
+                    appliedCoupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Code == dto.CouponCode.ToUpper());
 
-                if (coupon != null && coupon.IsActive && (coupon.ExpiresAt == null || coupon.ExpiresAt > DateTime.UtcNow))
+                if (appliedCoupon != null && appliedCoupon.IsActive && (appliedCoupon.ExpiresAt == null || appliedCoupon.ExpiresAt > DateTime.UtcNow))
                 {
-                    // Check minimum order amount
-                    if (coupon.MinOrderAmount == null || subTotal >= coupon.MinOrderAmount)
+                    // منع إعادة استخدام الكوبون من نفس المستخدم
+                    var alreadyUsed = await _context.UserCoupons.AnyAsync(uc => uc.UserId == userId && uc.CouponId == appliedCoupon.Id);
+                    if (!alreadyUsed)
                     {
-                        // Check usage limit
-                        if (coupon.UsageLimit == null || coupon.UsedCount < coupon.UsageLimit)
+                        // Check minimum order amount
+                        if (appliedCoupon.MinOrderAmount == null || subTotal >= appliedCoupon.MinOrderAmount)
                         {
-                            // Calculate discount
-                            if (coupon.DiscountType == "Percentage")
-                                discount = (subTotal * coupon.DiscountValue) / 100;
-                            else
-                                discount = coupon.DiscountValue;
+                            // Check usage limit
+                            if (appliedCoupon.UsageLimit == null || appliedCoupon.UsedCount < appliedCoupon.UsageLimit)
+                            {
+                                // Calculate discount
+                                if (appliedCoupon.DiscountType == "Percentage")
+                                    discount = (subTotal * appliedCoupon.DiscountValue) / 100;
+                                else
+                                    discount = appliedCoupon.DiscountValue;
 
-                            // Apply max discount cap if set
-                            if (coupon.MaxDiscount.HasValue && discount > coupon.MaxDiscount)
-                                discount = coupon.MaxDiscount.Value;
+                                // Apply max discount cap if set
+                                if (appliedCoupon.MaxDiscount.HasValue && discount > appliedCoupon.MaxDiscount)
+                                    discount = appliedCoupon.MaxDiscount.Value;
 
-                            // Increment usage count
-                            coupon.UsedCount++;
-                            _context.Coupons.Update(coupon);
+                                // Increment usage count
+                                appliedCoupon.UsedCount++;
+                                _context.Coupons.Update(appliedCoupon);
+
+                                // تسجيل استخدام الكوبون للمستخدم
+                                _context.UserCoupons.Add(new UserCoupon
+                                {
+                                    UserId = userId,
+                                    CouponId = appliedCoupon.Id,
+                                    UsedAt = DateTime.UtcNow
+                                });
+                            }
                         }
                     }
                 }

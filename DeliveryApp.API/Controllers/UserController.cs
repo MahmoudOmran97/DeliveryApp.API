@@ -318,6 +318,23 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { message = "FCM token updated" });
         }
 
+        [HttpGet("points")]
+        public async Task<IActionResult> GetMyPoints()
+        {
+            var userId = GetUserId();
+            // For now, return mock data since points table is not yet implemented
+            var result = new 
+            {
+                Balance = 150,
+                Transactions = new[]
+                {
+                    new { Id = 1, Title = "طلب رقم #1001", Amount = 50, Date = DateTime.UtcNow.AddDays(-2) },
+                    new { Id = 2, Title = "طلب رقم #1005", Amount = 100, Date = DateTime.UtcNow.AddDays(-1) }
+                }
+            };
+            return Ok(result);
+        }
+
         // DELETE api/user/me  — حذف الحساب
         [HttpDelete("me")]
         public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountDto dto)

@@ -116,6 +116,39 @@ using (var scope = app.Services.CreateScope())
     {
         Console.WriteLine($"[Startup] Restaurants OwnerUserId check failed: {ex.Message}");
     }
+    // ── Create UserCoupons table ──────────────────────────────────────────────
+    try
+    {
+        // تنفيذ استعلام SQL خام للتحقق من وجود الجدول وإنشائه إذا لزم الأمر
+        await db.Database.ExecuteSqlRawAsync(@"
+        IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'UserCoupons')
+        BEGIN
+            CREATE TABLE [dbo].[UserCoupons] (
+                [Id]        INT       IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                [UserId]    INT       NOT NULL,
+                [CouponId]  INT       NOT NULL,
+                [UsedAt]    DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+                
+                -- إضافة القيود (Constraints) لربط الجدول بالجداول الأخرى
+                CONSTRAINT [FK_UserCoupons_Users]
+                    FOREIGN KEY ([UserId]) REFERENCES [Users]([Id]) ON DELETE CASCADE,
+                
+                CONSTRAINT [FK_UserCoupons_Coupons]
+                    FOREIGN KEY ([CouponId]) REFERENCES [Coupons]([Id]) ON DELETE CASCADE
+            );
+
+            -- إنشاء فهارس (Indexes) لتحسين أداء الاستعلامات
+            CREATE INDEX [IX_UserCoupons_UserId] ON [dbo].[UserCoupons]([UserId]);
+            CREATE INDEX [IX_UserCoupons_CouponId] ON [dbo].[UserCoupons]([CouponId]);
+        END
+    ");
+        Console.WriteLine("[Startup] UserCoupons table ready.");
+    }
+    catch (Exception ex)
+    {
+        // تسجيل الخطأ في حال فشل العملية لضمان عدم توقف التطبيق بالكامل
+        Console.WriteLine($"[Startup] UserCoupons table check failed: {ex.Message}");
+    }
 
     // ── Fix Role CHECK constraint ─────────────────────────────────────────
     // Drop any old CHECK constraint on Role and recreate with correct values

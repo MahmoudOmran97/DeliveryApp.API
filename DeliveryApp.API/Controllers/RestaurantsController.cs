@@ -20,22 +20,42 @@ public class RestaurantsController : ControllerBase
     public RestaurantsController(ApplicationDbContext context) => _context = context;
 
     // ─── GET /api/restaurants  (public) ─────────────────────────────────────
+    // Supports: search, isOpen, sortBy, page, pageSize
+    //           lat / lng / radiusKm   → location-based filtering
+    //           category               → StoreType filter (Restaurant, Pharmacy, ...)
+    //           minRating              → minimum rating filter
     [HttpGet]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? search,
         [FromQuery] bool? isOpen,
         [FromQuery] string? sortBy,
+        [FromQuery] double? lat,
+        [FromQuery] double? lng,
+        [FromQuery] double radiusKm = 10.0,
+        [FromQuery] string? category = null,
+        [FromQuery] double minRating = 0.0,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 10)
     {
         var query = _context.Restaurants.Where(r => r.IsActive).AsQueryable();
 
+        // ── text search ──────────────────────────────────────────────────────
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(r => r.Name.Contains(search) || r.Address.Contains(search));
 
+        // ── open/closed filter ───────────────────────────────────────────────
         if (isOpen.HasValue)
             query = query.Where(r => r.IsOpen == isOpen.Value);
 
+        // ── StoreType / category filter ──────────────────────────────────────
+        if (!string.IsNullOrWhiteSpace(category))
+            query = query.Where(r => r.StoreType == category);
+
+        // ── min rating filter ────────────────────────────────────────────────
+        if (minRating > 0)
+            query = query.Where(r => r.Rating >= minRating);
+
+        // ── sort ─────────────────────────────────────────────────────────────
         query = sortBy switch
         {
             "rating" => query.OrderByDescending(r => r.Rating),
@@ -44,14 +64,16 @@ public class RestaurantsController : ControllerBase
             _ => query.OrderByDescending(r => r.Rating)
         };
 
-        var total = await query.CountAsync();
-        var restaurants = await query
-            .Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(r => new {
+        // ── fetch all that pass the DB filters ───────────────────────────────
+        var dbList = await query
+            .Select(r => new
+            {
                 r.Id,
                 r.Name,
                 r.Description,
                 r.Address,
+                r.Latitude,
+                r.Longitude,
                 r.ImageUrl,
                 r.CoverImageUrl,
                 r.Rating,
@@ -59,9 +81,46 @@ public class RestaurantsController : ControllerBase
                 r.DeliveryFee,
                 r.MinOrderAmount,
                 r.EstimatedTime,
-                r.IsOpen
+                r.IsOpen,
+                r.StoreType
             })
             .ToListAsync();
+
+        // ── in-memory location filter (Haversine) ────────────────────────────
+        bool useLocation = lat.HasValue && lng.HasValue;
+
+        var projected = dbList
+            .Select(r =>
+            {
+                double? distKm = useLocation
+                    ? GetDistance(lat!.Value, lng!.Value, r.Latitude, r.Longitude)
+                    : (double?)null;
+
+                return new
+                {
+                    r.Id,
+                    r.Name,
+                    r.Description,
+                    r.Address,
+                    r.ImageUrl,
+                    r.CoverImageUrl,
+                    r.Rating,
+                    r.TotalRatings,
+                    r.DeliveryFee,
+                    r.MinOrderAmount,
+                    r.EstimatedTime,
+                    r.IsOpen,
+                    r.StoreType,
+                    DistanceKm = distKm
+                };
+            })
+            .Where(r => !useLocation || r.DistanceKm!.Value <= radiusKm)
+            .OrderBy(r => useLocation ? r.DistanceKm : null)   // nearest first when location given
+            .ThenByDescending(r => r.Rating)
+            .ToList();
+
+        var total = projected.Count;
+        var paged = projected.Skip((page - 1) * pageSize).Take(pageSize).ToList();
 
         return Ok(new
         {
@@ -69,7 +128,7 @@ public class RestaurantsController : ControllerBase
             page,
             pageSize,
             totalPages = (int)Math.Ceiling(total / (double)pageSize),
-            data = restaurants
+            data = paged
         });
     }
 
@@ -213,6 +272,7 @@ public class RestaurantsController : ControllerBase
             DeliveryFee = dto.DeliveryFee,
             MinOrderAmount = dto.MinOrderAmount,
             EstimatedTime = dto.EstimatedTime,
+            StoreType = dto.StoreType,
             IsOpen = true,
             IsActive = true,
             OwnerUserId = dto.OwnerUserId,
@@ -260,6 +320,9 @@ public class RestaurantsController : ControllerBase
         restaurant.MinOrderAmount = dto.MinOrderAmount;
         restaurant.EstimatedTime = dto.EstimatedTime;
         restaurant.IsOpen = dto.IsOpen;
+
+        if (!string.IsNullOrWhiteSpace(dto.StoreType))
+            restaurant.StoreType = dto.StoreType;
 
         if (dto.Latitude != 0 && dto.Longitude != 0)
         {
@@ -329,6 +392,8 @@ public class CreateRestaurantDto
     public decimal MinOrderAmount { get; set; }
     public int EstimatedTime { get; set; } = 30;
     public int? OwnerUserId { get; set; }
+    /// <summary>Restaurant | Pharmacy | Grocery | Supermarket | Vegetables | Drinks | Accessories</summary>
+    public string StoreType { get; set; } = "Restaurant";
 }
 
 public class UpdateRestaurantDto
@@ -345,4 +410,6 @@ public class UpdateRestaurantDto
     public bool IsOpen { get; set; }
     public string? ImageUrl { get; set; }
     public string? CoverImageUrl { get; set; }
+    /// <summary>Restaurant | Pharmacy | Grocery | Supermarket | Vegetables | Drinks | Accessories</summary>
+    public string? StoreType { get; set; }
 }
