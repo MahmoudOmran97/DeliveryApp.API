@@ -15,6 +15,8 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IHubService, HubService>();
+builder.Services.AddHttpClient("fcm");
+builder.Services.AddScoped<IFcmService, FcmService>();
 
 builder.Services.AddCors(options =>
 {

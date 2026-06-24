@@ -13,12 +13,14 @@ namespace DeliveryApp.API.Controllers
     public class OrdersController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
-        private readonly IHubService _hubService;   // ← جديد
+        private readonly IHubService _hubService;
+        private readonly IFcmService _fcm;
 
-        public OrdersController(ApplicationDbContext context, IHubService hubService)
+        public OrdersController(ApplicationDbContext context, IHubService hubService, IFcmService fcm)
         {
             _context = context;
             _hubService = hubService;
+            _fcm = fcm;
         }
 
         private int GetUserId() =>
@@ -158,6 +160,19 @@ namespace DeliveryApp.API.Controllers
             });
 
             await _context.SaveChangesAsync();
+
+            // ← Push notification للعميل: الأوردر اتسجّل
+            await _fcm.SendToUserAsync(userId, "Order Placed! 🎉",
+                $"Your order from {restaurant.Name} has been placed.",
+                new Dictionary<string, string> { ["type"] = "OrderPlaced", ["orderId"] = order.Id.ToString() },
+                _context);
+
+            // ← Push notification لصاحب المطعم: أوردر جديد وصله
+            if (restaurant.OwnerUserId.HasValue)
+                await _fcm.SendToUserAsync(restaurant.OwnerUserId.Value, "🛍️ طلب جديد!",
+                    $"وصلك طلب جديد برقم #{order.Id}",
+                    new Dictionary<string, string> { ["type"] = "NewOrder", ["orderId"] = order.Id.ToString() },
+                    _context);
 
             return CreatedAtAction(nameof(GetById), new { id = order.Id }, new
             {
@@ -554,6 +569,14 @@ namespace DeliveryApp.API.Controllers
             await _context.SaveChangesAsync();
             await _hubService.NotifyOrderStatusChanged(order.Id, dto.Status);
 
+            // ← Push notification to customer
+            if (notifMap.TryGetValue(dto.Status, out var pushNotif))
+            {
+                await _fcm.SendToUserAsync(order.CustomerId, pushNotif.Title, pushNotif.Body,
+                    new Dictionary<string, string> { ["type"] = pushNotif.Type, ["orderId"] = order.Id.ToString() },
+                    _context);
+            }
+
             return Ok(new { message = "Status updated", order.Status });
         }
 
@@ -588,6 +611,12 @@ namespace DeliveryApp.API.Controllers
 
             // ← إخطار real-time
             await _hubService.NotifyOrderStatusChanged(order.Id, "Cancelled");
+
+            // ← Push notification
+            await _fcm.SendToUserAsync(userId, "Order Cancelled",
+                "Your order has been cancelled.",
+                new Dictionary<string, string> { ["type"] = "OrderCancelled", ["orderId"] = id.ToString() },
+                _context);
 
             return Ok(new { message = "Order cancelled successfully" });
         }
@@ -657,6 +686,14 @@ namespace DeliveryApp.API.Controllers
 
             // ← إخطار العميل real-time عبر SignalR
             await _hubService.NotifyOrderStatusChanged(order.Id, dto.Status);
+
+            // ← Push notification to customer
+            if (notifMap.TryGetValue(dto.Status, out var driverPush))
+            {
+                await _fcm.SendToUserAsync(order.CustomerId, driverPush.Title, driverPush.Body,
+                    new Dictionary<string, string> { ["type"] = driverPush.Type, ["orderId"] = order.Id.ToString() },
+                    _context);
+            }
 
             // If order is delivered, delete chat messages
             if (dto.Status == "Delivered")
