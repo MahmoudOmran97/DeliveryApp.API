@@ -1,4 +1,5 @@
 ﻿using DeliveryApp.API.Models;
+using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,13 @@ namespace DeliveryApp.API.Controllers
     public class UserController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
-        public UserController(ApplicationDbContext context) => _context = context;
+        private readonly IPointsService _points;
+
+        public UserController(ApplicationDbContext context, IPointsService points)
+        {
+            _context = context;
+            _points = points;
+        }
 
         private int GetUserId()
         {
@@ -304,35 +311,75 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { message = "Password changed successfully" });
         }
 
-        // PUT api/user/fcm-token  — تحديث توكن النوتيفيكيشنز
+        // PUT api/user/fcm-token  — تحديث توكن النوتيفيكيشنز ولغة التطبيق
         [HttpPut("fcm-token")]
         public async Task<IActionResult> UpdateFcmToken([FromBody] UpdateFcmDto dto)
         {
             var user = await _context.Users.FirstOrDefaultAsync(x => x.Id == GetUserId());
             if (user == null) return NotFound();
 
-            user.Fcmtoken = dto.Token;
+            if (!string.IsNullOrWhiteSpace(dto.Token))
+                user.Fcmtoken = dto.Token;
+            if (!string.IsNullOrWhiteSpace(dto.Language))
+                user.PreferredLanguage = dto.Language.StartsWith("ar", StringComparison.OrdinalIgnoreCase) ? "ar" : "en";
             user.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
             return Ok(new { message = "FCM token updated" });
         }
 
+        // PUT api/user/language — تحديث لغة الإشعارات فقط
+        [HttpPut("language")]
+        public async Task<IActionResult> UpdateLanguage([FromBody] UpdateLanguageDto dto)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(x => x.Id == GetUserId());
+            if (user == null) return NotFound();
+
+            user.PreferredLanguage = dto.Language.StartsWith("ar", StringComparison.OrdinalIgnoreCase) ? "ar" : "en";
+            user.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Language updated" });
+        }
+
         [HttpGet("points")]
         public async Task<IActionResult> GetMyPoints()
         {
             var userId = GetUserId();
-            // For now, return mock data since points table is not yet implemented
-            var result = new 
-            {
-                Balance = 150,
-                Transactions = new[]
+            var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null) return NotFound();
+
+            var transactions = await _context.PointTransactions
+                .Where(t => t.UserId == userId)
+                .OrderByDescending(t => t.CreatedAt)
+                .Take(50)
+                .Select(t => new
                 {
-                    new { Id = 1, Title = "طلب رقم #1001", Amount = 50, Date = DateTime.UtcNow.AddDays(-2) },
-                    new { Id = 2, Title = "طلب رقم #1005", Amount = 100, Date = DateTime.UtcNow.AddDays(-1) }
-                }
-            };
-            return Ok(result);
+                    t.Id,
+                    t.Title,
+                    Description = t.Description ?? "",
+                    Amount = t.Amount,
+                    Date = t.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(new { Balance = user.PointsBalance, Transactions = transactions });
+        }
+
+        [HttpPost("points/redeem")]
+        public async Task<IActionResult> RedeemPoints([FromBody] RedeemPointsDto dto)
+        {
+            var userId = GetUserId();
+            var result = await _points.RedeemPointsAsync(userId, dto.Points, _context);
+            if (!result.Ok)
+                return BadRequest(new { message = result.Message });
+
+            return Ok(new
+            {
+                message = "تم إنشاء الكوبون بنجاح",
+                couponCode = result.Coupon!.Code,
+                discount = result.Coupon.DiscountValue
+            });
         }
 
         // DELETE api/user/me  — حذف الحساب
@@ -366,7 +413,22 @@ namespace DeliveryApp.API.Controllers
         public string NewPassword { get; set; } = string.Empty;
     }
 
-    public class UpdateFcmDto { public string Token { get; set; } = string.Empty; }
+    public class UpdateFcmDto
+    {
+        public string? Token { get; set; }
+        public string? Language { get; set; }
+    }
+
+    public class UpdateLanguageDto
+    {
+        public string Language { get; set; } = "en";
+    }
+
+    public class RedeemPointsDto
+    {
+        public int Points { get; set; } = 100;
+    }
+
     public class DeleteAccountDto { public string Password { get; set; } = string.Empty; }
 
     public class AdminCreateUserDto

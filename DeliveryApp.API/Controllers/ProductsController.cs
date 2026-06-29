@@ -124,7 +124,9 @@ namespace DeliveryApp.API.Controllers
                     p.Calories,
                     p.IsAvailable,
                     Category = new { p.Category.Id, p.Category.Name },
-                    RestaurantId = p.Category.RestaurantId
+                    RestaurantId = p.Category.RestaurantId,
+                    Variants = p.Variants.Where(v => v.IsActive).OrderBy(v => v.SortOrder)
+                        .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder }).ToList()
                 })
                 .FirstOrDefaultAsync();
 
@@ -200,6 +202,39 @@ namespace DeliveryApp.API.Controllers
             await _context.SaveChangesAsync();
             return Ok(new { message = "Product deleted" });
         }
+
+        // POST api/products/{id}/variants
+        [AllowAnonymous]
+        [HttpPost("{id:int}/variants")]
+        public async Task<IActionResult> SetVariants(int id, [FromBody] List<VariantDto> variants)
+        {
+            var product = await _context.Products.FindAsync(id);
+            if (product == null) return NotFound();
+
+            var existing = await _context.ProductVariants.Where(v => v.ProductId == id).ToListAsync();
+            _context.ProductVariants.RemoveRange(existing);
+
+            foreach (var (v, i) in variants.Select((v, i) => (v, i)))
+            {
+                _context.ProductVariants.Add(new ProductVariant
+                {
+                    ProductId = id,
+                    Name = v.Name,
+                    Price = v.Price,
+                    SortOrder = v.SortOrder > 0 ? v.SortOrder : i,
+                    IsActive = true
+                });
+            }
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Variants saved" });
+        }
+    }
+
+    public class VariantDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+        public int SortOrder { get; set; }
     }
 
     public class CreateProductDto

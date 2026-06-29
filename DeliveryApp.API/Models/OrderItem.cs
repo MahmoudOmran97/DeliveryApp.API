@@ -27,6 +27,11 @@ public partial class OrderItem
     [StringLength(200)]
     public string? Notes { get; set; }
 
+    public int? VariantId { get; set; }
+
+    [StringLength(100)]
+    public string? VariantName { get; set; }
+
     [ForeignKey("OrderId")]
     [InverseProperty("OrderItems")]
     public virtual Order Order { get; set; } = null!;

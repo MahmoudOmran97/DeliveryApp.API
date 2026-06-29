@@ -15,12 +15,14 @@ namespace DeliveryApp.API.Controllers
         private readonly ApplicationDbContext _context;
         private readonly IHubService _hubService;
         private readonly IFcmService _fcm;
+        private readonly IPointsService _points;
 
-        public OrdersController(ApplicationDbContext context, IHubService hubService, IFcmService fcm)
+        public OrdersController(ApplicationDbContext context, IHubService hubService, IFcmService fcm, IPointsService points)
         {
             _context = context;
             _hubService = hubService;
             _fcm = fcm;
+            _points = points;
         }
 
         private int GetUserId() =>
@@ -35,29 +37,63 @@ namespace DeliveryApp.API.Controllers
         {
             var userId = GetUserId();
 
-            if (!dto.Items.Any())
-                return BadRequest(new { message = "Order must have at least one item" });
+            if (!dto.Items.Any() && string.IsNullOrWhiteSpace(dto.PrescriptionImageUrl))
+                return BadRequest(new { message = "Order must have at least one item or a prescription" });
 
             var restaurant = await _context.Restaurants
                 .FirstOrDefaultAsync(r => r.Id == dto.RestaurantId && r.IsActive && r.IsOpen);
             if (restaurant == null)
                 return BadRequest(new { message = "Restaurant not found or closed" });
 
+            if (!string.IsNullOrWhiteSpace(dto.PrescriptionImageUrl) &&
+                !restaurant.StoreType.Equals("Pharmacy", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Prescription orders are only for pharmacies" });
+
             var productIds = dto.Items.Select(i => i.ProductId).ToList();
-            var products = await _context.Products
-                .Where(p => productIds.Contains(p.Id) && p.IsActive && p.IsAvailable)
-                .ToDictionaryAsync(p => p.Id);
+            var products = productIds.Count == 0
+                ? new Dictionary<int, Product>()
+                : await _context.Products
+                    .Where(p => productIds.Contains(p.Id) && p.IsActive && p.IsAvailable)
+                    .ToDictionaryAsync(p => p.Id);
+
+            var variantIds = dto.Items.Where(i => i.VariantId.HasValue).Select(i => i.VariantId!.Value).ToList();
+            var variants = variantIds.Count == 0
+                ? new Dictionary<int, ProductVariant>()
+                : await _context.ProductVariants
+                    .Where(v => variantIds.Contains(v.Id) && v.IsActive)
+                    .ToDictionaryAsync(v => v.Id);
 
             foreach (var item in dto.Items)
+            {
                 if (!products.ContainsKey(item.ProductId))
                     return BadRequest(new { message = $"Product {item.ProductId} not found or unavailable" });
+                if (item.VariantId.HasValue && !variants.ContainsKey(item.VariantId.Value))
+                    return BadRequest(new { message = $"Variant {item.VariantId} not found" });
+            }
 
-            var orderItems = dto.Items.Select(i => new OrderItem
+            var orderItems = dto.Items.Select(i =>
             {
-                ProductId = i.ProductId,
-                Quantity = i.Quantity,
-                UnitPrice = products[i.ProductId].DiscountedPrice ?? products[i.ProductId].Price,
-                Notes = i.Notes
+                decimal unitPrice;
+                string? variantName = null;
+                if (i.UnitPriceOverride.HasValue)
+                    unitPrice = i.UnitPriceOverride.Value;
+                else if (i.VariantId.HasValue && variants.TryGetValue(i.VariantId.Value, out var v))
+                {
+                    unitPrice = v.Price;
+                    variantName = v.Name;
+                }
+                else
+                    unitPrice = products[i.ProductId].DiscountedPrice ?? products[i.ProductId].Price;
+
+                return new OrderItem
+                {
+                    ProductId = i.ProductId,
+                    Quantity = i.Quantity,
+                    UnitPrice = unitPrice,
+                    Notes = i.Notes,
+                    VariantId = i.VariantId,
+                    VariantName = variantName
+                };
             }).ToList();
 
             var subTotal = orderItems.Sum(i => i.UnitPrice * i.Quantity);
@@ -114,7 +150,8 @@ namespace DeliveryApp.API.Controllers
 
             total = subTotal + restaurant.DeliveryFee - discount;
 
-            if (total < restaurant.MinOrderAmount)
+            var isPrescriptionOnly = !string.IsNullOrWhiteSpace(dto.PrescriptionImageUrl) && !orderItems.Any();
+            if (!isPrescriptionOnly && total < restaurant.MinOrderAmount)
                 return BadRequest(new { message = $"Minimum order is {restaurant.MinOrderAmount} EGP" });
 
             var order = new Order
@@ -129,7 +166,10 @@ namespace DeliveryApp.API.Controllers
                 DeliveryAddress = dto.DeliveryAddress,
                 DeliveryLatitude = dto.DeliveryLatitude,
                 DeliveryLongitude = dto.DeliveryLongitude,
-                DeliveryNotes = dto.DeliveryNotes,
+                DeliveryNotes = isPrescriptionOnly
+                    ? $"[روشتة] {dto.PrescriptionNotes ?? ""}".Trim()
+                    : dto.DeliveryNotes,
+                PrescriptionImageUrl = dto.PrescriptionImageUrl,
                 PaymentMethod = dto.PaymentMethod,
                 PaymentStatus = "Pending",
                 CreatedAt = DateTime.UtcNow,
@@ -149,11 +189,14 @@ namespace DeliveryApp.API.Controllers
 
             await _context.SaveChangesAsync();
 
+            var customerLang = await GetUserLanguageAsync(userId);
+            var placedNotif = NotificationLocalizer.OrderPlaced(customerLang, restaurant.Name, restaurant.StoreType);
+
             _context.Notifications.Add(new Notification
             {
                 UserId = userId,
-                Title = "Order Placed!",
-                Body = $"Your order from {restaurant.Name} has been placed.",
+                Title = placedNotif.Title,
+                Body = placedNotif.Body,
                 Type = "OrderPlaced",
                 OrderId = order.Id,
                 CreatedAt = DateTime.UtcNow
@@ -161,18 +204,18 @@ namespace DeliveryApp.API.Controllers
 
             await _context.SaveChangesAsync();
 
-            // ← Push notification للعميل: الأوردر اتسجّل
-            await _fcm.SendToUserAsync(userId, "Order Placed! 🎉",
-                $"Your order from {restaurant.Name} has been placed.",
+            await _fcm.SendToUserAsync(userId, placedNotif.Title, placedNotif.Body,
                 new Dictionary<string, string> { ["type"] = "OrderPlaced", ["orderId"] = order.Id.ToString() },
                 _context);
 
-            // ← Push notification لصاحب المطعم: أوردر جديد وصله
             if (restaurant.OwnerUserId.HasValue)
-                await _fcm.SendToUserAsync(restaurant.OwnerUserId.Value, "🛍️ طلب جديد!",
-                    $"وصلك طلب جديد برقم #{order.Id}",
+            {
+                var ownerLang = await GetUserLanguageAsync(restaurant.OwnerUserId.Value);
+                var ownerNotif = NotificationLocalizer.NewOrderForOwner(ownerLang, order.Id);
+                await _fcm.SendToUserAsync(restaurant.OwnerUserId.Value, ownerNotif.Title, ownerNotif.Body,
                     new Dictionary<string, string> { ["type"] = "NewOrder", ["orderId"] = order.Id.ToString() },
                     _context);
+            }
 
             return CreatedAtAction(nameof(GetById), new { id = order.Id }, new
             {
@@ -526,7 +569,10 @@ namespace DeliveryApp.API.Controllers
         [HttpPut("{id}/restaurant-status")]
         public async Task<IActionResult> UpdateRestaurantStatus(int id, [FromBody] UpdateStatusDto dto)
         {
-            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == id);
+            var order = await _context.Orders
+                .Include(o => o.Customer)
+                .Include(o => o.Restaurant)
+                .FirstOrDefaultAsync(o => o.Id == id);
             if (order == null) return NotFound();
 
             // المطعم فقط يقدر يغير: Pending → Accepted/Rejected, Accepted → Preparing, Preparing → ReadyForPickup
@@ -545,22 +591,18 @@ namespace DeliveryApp.API.Controllers
 
             if (dto.Status == "Accepted") order.AcceptedAt = DateTime.UtcNow;
 
-            var notifMap = new Dictionary<string, (string Title, string Body, string Type)>
+            var statusTypes = new[] { "Accepted", "Preparing", "ReadyForPickup", "Rejected" };
+            if (statusTypes.Contains(dto.Status))
             {
-                ["Accepted"] = ("Order Accepted!", "Your order has been accepted.", "OrderAccepted"),
-                ["Preparing"] = ("Preparing Order", "The restaurant is preparing your food.", "OrderPreparing"),
-                ["ReadyForPickup"] = ("Order Ready!", "Your order is ready for pickup by driver.", "OrderReadyForPickup"),
-                ["Rejected"] = ("Order Rejected", "Sorry, your order was rejected.", "OrderCancelled"),
-            };
+                var notif = NotificationLocalizer.StatusUpdate(
+                    order.Customer.PreferredLanguage, dto.Status, order.Restaurant.StoreType);
 
-            if (notifMap.TryGetValue(dto.Status, out var notif))
-            {
                 _context.Notifications.Add(new Notification
                 {
                     UserId = order.CustomerId,
                     Title = notif.Title,
                     Body = notif.Body,
-                    Type = notif.Type,
+                    Type = dto.Status == "Rejected" ? "OrderCancelled" : $"Order{dto.Status}",
                     OrderId = order.Id,
                     CreatedAt = DateTime.UtcNow
                 });
@@ -569,11 +611,16 @@ namespace DeliveryApp.API.Controllers
             await _context.SaveChangesAsync();
             await _hubService.NotifyOrderStatusChanged(order.Id, dto.Status);
 
-            // ← Push notification to customer
-            if (notifMap.TryGetValue(dto.Status, out var pushNotif))
+            if (statusTypes.Contains(dto.Status))
             {
+                var pushNotif = NotificationLocalizer.StatusUpdate(
+                    order.Customer.PreferredLanguage, dto.Status, order.Restaurant.StoreType);
                 await _fcm.SendToUserAsync(order.CustomerId, pushNotif.Title, pushNotif.Body,
-                    new Dictionary<string, string> { ["type"] = pushNotif.Type, ["orderId"] = order.Id.ToString() },
+                    new Dictionary<string, string>
+                    {
+                        ["type"] = dto.Status == "Rejected" ? "OrderCancelled" : $"Order{dto.Status}",
+                        ["orderId"] = order.Id.ToString()
+                    },
                     _context);
             }
 
@@ -597,11 +644,14 @@ namespace DeliveryApp.API.Controllers
             order.Status = "Cancelled";
             order.CancellationReason = dto.Reason;
 
+            var cancelNotif = NotificationLocalizer.StatusUpdate(
+                await GetUserLanguageAsync(userId), "Cancelled");
+
             _context.Notifications.Add(new Notification
             {
                 UserId = userId,
-                Title = "Order Cancelled",
-                Body = "Your order has been cancelled.",
+                Title = cancelNotif.Title,
+                Body = cancelNotif.Body,
                 Type = "OrderCancelled",
                 OrderId = order.Id,
                 CreatedAt = DateTime.UtcNow
@@ -609,12 +659,9 @@ namespace DeliveryApp.API.Controllers
 
             await _context.SaveChangesAsync();
 
-            // ← إخطار real-time
             await _hubService.NotifyOrderStatusChanged(order.Id, "Cancelled");
 
-            // ← Push notification
-            await _fcm.SendToUserAsync(userId, "Order Cancelled",
-                "Your order has been cancelled.",
+            await _fcm.SendToUserAsync(userId, cancelNotif.Title, cancelNotif.Body,
                 new Dictionary<string, string> { ["type"] = "OrderCancelled", ["orderId"] = id.ToString() },
                 _context);
 
@@ -630,6 +677,8 @@ namespace DeliveryApp.API.Controllers
         {
             var order = await _context.Orders
                 .Include(o => o.Driver)
+                .Include(o => o.Customer)
+                .Include(o => o.Restaurant)
                 .FirstOrDefaultAsync(o => o.Id == id);
             if (order == null) return NotFound();
 
@@ -659,24 +708,18 @@ namespace DeliveryApp.API.Controllers
                     break;
             }
 
-            var notifMap = new Dictionary<string, (string Title, string Body, string Type)>
+            var driverStatusTypes = new[] { "Accepted", "Preparing", "ReadyForPickup", "OnTheWay", "Delivered", "Rejected" };
+            if (driverStatusTypes.Contains(dto.Status))
             {
-                ["Accepted"] = ("Order Accepted!", "Your order has been accepted.", "OrderAccepted"),
-                ["Preparing"] = ("Preparing Your Order", "The restaurant is preparing your food.", "OrderPreparing"),
-                ["ReadyForPickup"] = ("Order Ready!", "Your order is ready for pickup.", "OrderReadyForPickup"),
-                ["OnTheWay"] = ("Driver On The Way!", "Your order is on its way.", "OrderOnTheWay"),
-                ["Delivered"] = ("Order Delivered!", "Enjoy your meal!", "OrderDelivered"),
-                ["Rejected"] = ("Order Rejected", "Sorry, your order was rejected.", "OrderCancelled"),
-            };
+                var notif = NotificationLocalizer.StatusUpdate(
+                    order.Customer.PreferredLanguage, dto.Status, order.Restaurant.StoreType);
 
-            if (notifMap.TryGetValue(dto.Status, out var notif))
-            {
                 _context.Notifications.Add(new Notification
                 {
                     UserId = order.CustomerId,
                     Title = notif.Title,
                     Body = notif.Body,
-                    Type = notif.Type,
+                    Type = dto.Status == "Rejected" ? "OrderCancelled" : $"Order{dto.Status}",
                     OrderId = order.Id,
                     CreatedAt = DateTime.UtcNow
                 });
@@ -684,14 +727,29 @@ namespace DeliveryApp.API.Controllers
 
             await _context.SaveChangesAsync();
 
-            // ← إخطار العميل real-time عبر SignalR
+            if (dto.Status == "Delivered" && order.PointsEarned == 0)
+            {
+                var earned = _points.CalculateEarnedPoints(order.TotalAmount);
+                if (earned > 0)
+                {
+                    order.PointsEarned = earned;
+                    await _context.SaveChangesAsync();
+                    await _points.AwardOrderPointsAsync(order.CustomerId, order.Id, order.TotalAmount, _context);
+                }
+            }
+
             await _hubService.NotifyOrderStatusChanged(order.Id, dto.Status);
 
-            // ← Push notification to customer
-            if (notifMap.TryGetValue(dto.Status, out var driverPush))
+            if (driverStatusTypes.Contains(dto.Status))
             {
-                await _fcm.SendToUserAsync(order.CustomerId, driverPush.Title, driverPush.Body,
-                    new Dictionary<string, string> { ["type"] = driverPush.Type, ["orderId"] = order.Id.ToString() },
+                var pushNotif = NotificationLocalizer.StatusUpdate(
+                    order.Customer.PreferredLanguage, dto.Status, order.Restaurant.StoreType);
+                await _fcm.SendToUserAsync(order.CustomerId, pushNotif.Title, pushNotif.Body,
+                    new Dictionary<string, string>
+                    {
+                        ["type"] = dto.Status == "Rejected" ? "OrderCancelled" : $"Order{dto.Status}",
+                        ["orderId"] = order.Id.ToString()
+                    },
                     _context);
             }
 
@@ -768,6 +826,12 @@ namespace DeliveryApp.API.Controllers
 
             return Ok(new { message = "Order assigned to you", orderId = order.Id });
         }
+
+        private async Task<string> GetUserLanguageAsync(int userId) =>
+            await _context.Users.AsNoTracking()
+                .Where(u => u.Id == userId)
+                .Select(u => u.PreferredLanguage)
+                .FirstOrDefaultAsync() ?? "en";
     }
 
     // DTOs
@@ -779,6 +843,8 @@ namespace DeliveryApp.API.Controllers
         public double DeliveryLatitude { get; set; }
         public double DeliveryLongitude { get; set; }
         public string? DeliveryNotes { get; set; }
+        public string? PrescriptionImageUrl { get; set; }
+        public string? PrescriptionNotes { get; set; }
         public string PaymentMethod { get; set; } = "Cash";
         public string? CouponCode { get; set; }
         public int? CouponId { get; set; }
@@ -787,8 +853,10 @@ namespace DeliveryApp.API.Controllers
     public class OrderItemDto
     {
         public int ProductId { get; set; }
-        public int Quantity { get; set; }
+        public int Quantity { get; set; } = 1;
         public string? Notes { get; set; }
+        public int? VariantId { get; set; }
+        public decimal? UnitPriceOverride { get; set; }
     }
 
     public class CancelOrderDto { public string? Reason { get; set; } }

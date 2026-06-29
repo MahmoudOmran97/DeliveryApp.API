@@ -66,6 +66,11 @@ public partial class Order
 
     public DateTime? DeliveredAt { get; set; }
 
+    [StringLength(500)]
+    public string? PrescriptionImageUrl { get; set; }
+
+    public int PointsEarned { get; set; }
+
     [ForeignKey("CustomerId")]
     [InverseProperty("Orders")]
     public virtual User Customer { get; set; } = null!;

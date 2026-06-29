@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using DeliveryApp.API.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,10 +10,17 @@ namespace DeliveryApp.API.Services;
 
 public interface IFcmService
 {
-    Task SendAsync(string fcmToken, string title, string body, Dictionary<string, string>? data = null);
+    Task<bool> SendAsync(string fcmToken, string title, string body, Dictionary<string, string>? data = null);
     Task SendToUserAsync(int userId, string title, string body,
         Dictionary<string, string>? data = null, ApplicationDbContext? db = null);
+    Task<FcmDiagnostics> GetDiagnosticsAsync();
 }
+
+public record FcmDiagnostics(
+    bool ServiceAccountFound,
+    string? ServiceAccountPath,
+    bool AccessTokenOk,
+    string? LastError);
 
 public class FcmService : IFcmService
 {
@@ -31,10 +39,10 @@ public class FcmService : IFcmService
         _logger = logger;
     }
 
-    public async Task SendAsync(string fcmToken, string title, string body,
+    public async Task<bool> SendAsync(string fcmToken, string title, string body,
         Dictionary<string, string>? data = null)
     {
-        if (string.IsNullOrWhiteSpace(fcmToken)) return;
+        if (string.IsNullOrWhiteSpace(fcmToken)) return false;
 
         try
         {
@@ -42,15 +50,40 @@ public class FcmService : IFcmService
             if (string.IsNullOrEmpty(projectId))
             {
                 _logger.LogWarning("[FCM] ProjectId not configured");
-                return;
+                return false;
             }
 
             var accessToken = await GetAccessTokenAsync();
             if (string.IsNullOrEmpty(accessToken))
             {
                 _logger.LogWarning("[FCM] Could not get access token");
-                return;
+                return false;
             }
+
+            // ✅ KEY FIX: Send as DATA-ONLY message (no "notification" key).
+            //
+            // FCM rule:
+            //   - Notification message (has "notification" key) → Android shows it
+            //     automatically when app is BACKGROUND, but does NOT call
+            //     onMessageReceived() when app is FOREGROUND.
+            //     Result: Plugin.Firebase NotificationReceived event never fires.
+            //
+            //   - Data message (only "data" key, no "notification") → Android ALWAYS
+            //     calls onMessageReceived(), both foreground and background.
+            //     Result: Plugin.Firebase NotificationReceived fires every time ✓
+            //
+            // We put title/body inside the data dict so the MAUI app can read them
+            // from args.Notification.Title / args.Notification.Body (Plugin.Firebase
+            // maps data["title"] and data["body"] automatically), and also shows its
+            // own local notification via NotificationManagerCompat.
+            //
+            // android.priority = "high" ensures delivery even in Doze mode.
+
+            var dataPayload = new Dictionary<string, string>(data ?? new())
+            {
+                ["title"] = title,
+                ["body"] = body
+            };
 
             var payload = new
             {
@@ -60,14 +93,9 @@ public class FcmService : IFcmService
                     notification = new { title, body },
                     android = new
                     {
-                        priority = "high",
-                        notification = new { sound = "default", channel_id = "default" }
+                        priority = "high"
                     },
-                    apns = new
-                    {
-                        payload = new { aps = new { sound = "default", badge = 1 } }
-                    },
-                    data = data ?? new Dictionary<string, string>()
+                    data = dataPayload
                 }
             };
 
@@ -82,13 +110,19 @@ public class FcmService : IFcmService
 
             var responseBody = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
+            {
                 _logger.LogWarning("[FCM] Send failed: {Code} - {Body}", response.StatusCode, responseBody);
-            else
-                _logger.LogInformation("[FCM] Sent OK → token ending ...{Suffix}", fcmToken[^Math.Min(6, fcmToken.Length)..]);
+                return false;
+            }
+
+            _logger.LogInformation("[FCM] Sent OK → token ending ...{Suffix}",
+                fcmToken[^Math.Min(6, fcmToken.Length)..]);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[FCM] Exception sending notification");
+            return false;
         }
     }
 
@@ -97,8 +131,31 @@ public class FcmService : IFcmService
     {
         if (db == null) return;
         var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
-        if (string.IsNullOrEmpty(user?.Fcmtoken)) return;
+        if (string.IsNullOrEmpty(user?.Fcmtoken))
+        {
+            _logger.LogWarning("[FCM] User {UserId} has no FCM token in database — notification skipped", userId);
+            return;
+        }
         await SendAsync(user.Fcmtoken, title, body, data);
+    }
+
+    public async Task<FcmDiagnostics> GetDiagnosticsAsync()
+    {
+        var path = ResolveServiceAccountPath();
+        if (path == null)
+            return new FcmDiagnostics(false, null, false, "Service account file not found");
+
+        try
+        {
+            var token = await GetAccessTokenAsync();
+            return string.IsNullOrEmpty(token)
+                ? new FcmDiagnostics(true, path, false, "OAuth token exchange failed")
+                : new FcmDiagnostics(true, path, true, null);
+        }
+        catch (Exception ex)
+        {
+            return new FcmDiagnostics(true, path, false, ex.Message);
+        }
     }
 
     // ── OAuth2 via Service Account JWT ──────────────────────────────────────
@@ -110,20 +167,11 @@ public class FcmService : IFcmService
             if (_cachedToken != null && DateTime.UtcNow < _tokenExpiry)
                 return _cachedToken;
 
-            var keyPath = _config["Fcm:ServiceAccountPath"];
-            if (string.IsNullOrEmpty(keyPath))
+            var keyPath = ResolveServiceAccountPath();
+            if (keyPath == null)
             {
-                _logger.LogWarning("[FCM] ServiceAccountPath not configured");
-                return null;
-            }
-
-            // Support relative path (relative to the exe)
-            if (!Path.IsPathRooted(keyPath))
-                keyPath = Path.Combine(AppContext.BaseDirectory, keyPath);
-
-            if (!File.Exists(keyPath))
-            {
-                _logger.LogWarning("[FCM] Service account file not found: {Path}", keyPath);
+                _logger.LogWarning("[FCM] Service account file not found. Checked: {Base}firebase-adminsdk.json",
+                    AppContext.BaseDirectory);
                 return null;
             }
 
@@ -137,10 +185,9 @@ public class FcmService : IFcmService
                 return null;
             }
 
-            // Build JWT for Google OAuth2
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var header = Base64UrlEncode(JsonSerializer.Serialize(new { alg = "RS256", typ = "JWT" }));
-            var payload = Base64UrlEncode(JsonSerializer.Serialize(new
+            var claimsPayload = Base64UrlEncode(JsonSerializer.Serialize(new
             {
                 iss = key.ClientEmail,
                 sub = key.ClientEmail,
@@ -150,11 +197,10 @@ public class FcmService : IFcmService
                 scope = "https://www.googleapis.com/auth/firebase.messaging"
             }));
 
-            var unsigned = $"{header}.{payload}";
+            var unsigned = $"{header}.{claimsPayload}";
             var signature = SignWithRsa(key.PrivateKey, unsigned);
             var jwt = $"{unsigned}.{signature}";
 
-            // Exchange JWT → Access Token
             var client = _http.CreateClient("fcm");
             var resp = await client.PostAsync("https://oauth2.googleapis.com/token",
                 new FormUrlEncodedContent(new Dictionary<string, string>
@@ -163,14 +209,14 @@ public class FcmService : IFcmService
                     ["assertion"] = jwt
                 }));
 
-            var body = await resp.Content.ReadAsStringAsync();
+            var respBody = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
-                _logger.LogWarning("[FCM] Token exchange failed: {Body}", body);
+                _logger.LogWarning("[FCM] Token exchange failed: {Body}", respBody);
                 return null;
             }
 
-            var tokenData = JsonSerializer.Deserialize<TokenResponse>(body,
+            var tokenData = JsonSerializer.Deserialize<TokenResponse>(respBody,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
             _cachedToken = tokenData?.AccessToken;
@@ -179,6 +225,24 @@ public class FcmService : IFcmService
             return _cachedToken;
         }
         finally { _lock.Release(); }
+    }
+
+    private string? ResolveServiceAccountPath()
+    {
+        var configured = _config["Fcm:ServiceAccountPath"];
+        var candidates = new List<string>();
+
+        if (!string.IsNullOrEmpty(configured))
+        {
+            candidates.Add(Path.IsPathRooted(configured)
+                ? configured
+                : Path.Combine(AppContext.BaseDirectory, configured));
+        }
+
+        candidates.Add(Path.Combine(AppContext.BaseDirectory, "firebase-adminsdk.json"));
+        candidates.Add(Path.Combine(AppContext.BaseDirectory, "wwwroot", "firebase-adminsdk.json"));
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 
     private static string SignWithRsa(string privateKeyPem, string data)
@@ -203,13 +267,19 @@ public class FcmService : IFcmService
 
     private class ServiceAccountKey
     {
+        [JsonPropertyName("client_email")]
         public string ClientEmail { get; set; } = "";
+
+        [JsonPropertyName("private_key")]
         public string PrivateKey { get; set; } = "";
     }
 
     private class TokenResponse
     {
+        [JsonPropertyName("access_token")]
         public string? AccessToken { get; set; }
+
+        [JsonPropertyName("expires_in")]
         public int ExpiresIn { get; set; }
     }
 }

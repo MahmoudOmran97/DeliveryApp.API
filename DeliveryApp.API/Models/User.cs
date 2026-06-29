@@ -39,6 +39,11 @@ public partial class User
     [StringLength(500)]
     public string? Fcmtoken { get; set; }
 
+    [StringLength(5)]
+    public string PreferredLanguage { get; set; } = "en";
+
+    public int PointsBalance { get; set; }
+
     public bool IsActive { get; set; }
 
     public DateTime CreatedAt { get; set; }

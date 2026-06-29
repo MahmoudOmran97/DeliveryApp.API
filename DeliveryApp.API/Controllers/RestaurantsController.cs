@@ -156,6 +156,7 @@ public class RestaurantsController : ControllerBase
                 r.EstimatedTime,
                 r.IsOpen,
                 r.IsActive,
+                r.StoreType,
                 r.OwnerUserId,
                 OwnerName = r.Owner != null ? r.Owner.FullName : null,
                 OwnerEmail = r.Owner != null ? r.Owner.Email : null
@@ -197,7 +198,12 @@ public class RestaurantsController : ControllerBase
                         p.Calories,
                         p.IsAvailable,
                         CategoryId = c.Id,
-                        CategoryName = c.Name
+                        CategoryName = c.Name,
+                        Variants = p.Variants
+                            .Where(v => v.IsActive)
+                            .OrderBy(v => v.SortOrder)
+                            .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder })
+                            .ToList()
                     }).ToList()
             })
             .ToListAsync();

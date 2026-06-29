@@ -17,6 +17,7 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IHubService, HubService>();
 builder.Services.AddHttpClient("fcm");
 builder.Services.AddScoped<IFcmService, FcmService>();
+builder.Services.AddScoped<IPointsService, PointsService>();
 
 builder.Services.AddCors(options =>
 {
@@ -341,6 +342,82 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] Restaurants.StoreType column ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] StoreType column check failed: {ex.Message}"); }
+
+    // ── Add PreferredLanguage column to Users ─────────────────────────────────
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'PreferredLanguage'
+            )
+            BEGIN
+                ALTER TABLE [dbo].[Users]
+                ADD [PreferredLanguage] NVARCHAR(5) NOT NULL DEFAULT 'en';
+            END
+        ");
+        Console.WriteLine("[Startup] Users.PreferredLanguage column ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] PreferredLanguage column check failed: {ex.Message}"); }
+
+    // ── ProductVariants table ───────────────────────────────────────────────
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ProductVariants')
+            BEGIN
+                CREATE TABLE [dbo].[ProductVariants] (
+                    [Id] INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [ProductId] INT NOT NULL,
+                    [Name] NVARCHAR(100) NOT NULL,
+                    [Price] DECIMAL(10,2) NOT NULL,
+                    [SortOrder] INT NOT NULL DEFAULT 0,
+                    [IsActive] BIT NOT NULL DEFAULT 1,
+                    CONSTRAINT [FK_ProductVariants_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products]([Id])
+                );
+            END
+        ");
+        Console.WriteLine("[Startup] ProductVariants table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] ProductVariants failed: {ex.Message}"); }
+
+    // ── PointTransactions + User.PointsBalance + Order columns ─────────────
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'PointsBalance')
+                ALTER TABLE [dbo].[Users] ADD [PointsBalance] INT NOT NULL DEFAULT 0;
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Orders' AND COLUMN_NAME = 'PrescriptionImageUrl')
+                ALTER TABLE [dbo].[Orders] ADD [PrescriptionImageUrl] NVARCHAR(500) NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Orders' AND COLUMN_NAME = 'PointsEarned')
+                ALTER TABLE [dbo].[Orders] ADD [PointsEarned] INT NOT NULL DEFAULT 0;
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'OrderItems' AND COLUMN_NAME = 'VariantId')
+                ALTER TABLE [dbo].[OrderItems] ADD [VariantId] INT NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'OrderItems' AND COLUMN_NAME = 'VariantName')
+                ALTER TABLE [dbo].[OrderItems] ADD [VariantName] NVARCHAR(100) NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'PointTransactions')
+            BEGIN
+                CREATE TABLE [dbo].[PointTransactions] (
+                    [Id] INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [UserId] INT NOT NULL,
+                    [Amount] INT NOT NULL,
+                    [Title] NVARCHAR(200) NOT NULL,
+                    [Description] NVARCHAR(300) NULL,
+                    [OrderId] INT NULL,
+                    [CouponId] INT NULL,
+                    [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+                    CONSTRAINT [FK_PointTransactions_Users] FOREIGN KEY ([UserId]) REFERENCES [dbo].[Users]([Id])
+                );
+            END
+        ");
+        Console.WriteLine("[Startup] Points schema ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Points schema failed: {ex.Message}"); }
 }
 
 app.UseSwagger();
@@ -357,6 +434,7 @@ app.UseExceptionHandler(errApp => errApp.Run(async ctx =>
 }));
 
 app.UseHttpsRedirection();
+app.UseStaticFiles();
 app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
