@@ -128,6 +128,38 @@ public class CouponsController : ControllerBase
         return Ok(result);
     }
 
+    // GET api/coupons/admin — كل الكوبونات (نشطة وغير نشطة ومنتهية) للوحة الإدارة
+    [HttpGet("admin")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetAllAdmin()
+    {
+        var now = DateTime.UtcNow;
+        var coupons = await _db.Coupons
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.Code,
+                c.Title,
+                c.Description,
+                c.DiscountType,
+                c.DiscountValue,
+                c.MinOrderAmount,
+                c.MaxDiscount,
+                c.RestaurantId,
+                RestaurantName = c.Restaurant != null ? c.Restaurant.Name : null,
+                c.UsageLimit,
+                c.UsedCount,
+                c.IsActive,
+                c.ExpiresAt,
+                c.CreatedAt,
+                IsExpired = c.ExpiresAt.HasValue && c.ExpiresAt < now
+            })
+            .ToListAsync();
+
+        return Ok(coupons);
+    }
+
     // POST api/coupons  — admin: create coupon
     [HttpPost]
     [Authorize(Roles = "Admin")]
@@ -138,6 +170,28 @@ public class CouponsController : ControllerBase
         _db.Coupons.Add(coupon);
         await _db.SaveChangesAsync();
         return Ok(coupon);
+    }
+
+    // PUT api/coupons/{id} — admin only
+    [HttpPut("{id}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Update(int id, [FromBody] Coupon updated)
+    {
+        var c = await _db.Coupons.FindAsync(id);
+        if (c == null) return NotFound();
+        c.Code = updated.Code;
+        c.Title = updated.Title;
+        c.Description = updated.Description;
+        c.DiscountType = updated.DiscountType;
+        c.DiscountValue = updated.DiscountValue;
+        c.MinOrderAmount = updated.MinOrderAmount;
+        c.MaxDiscount = updated.MaxDiscount;
+        c.RestaurantId = updated.RestaurantId;
+        c.UsageLimit = updated.UsageLimit;
+        c.IsActive = updated.IsActive;
+        c.ExpiresAt = updated.ExpiresAt;
+        await _db.SaveChangesAsync();
+        return Ok(c);
     }
 
     // DELETE api/coupons/{id}

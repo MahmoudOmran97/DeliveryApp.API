@@ -40,6 +40,32 @@ public class BannersController : ControllerBase
         return Ok(banners);
     }
 
+    // GET api/banners/admin — كل البانرات (نشطة وغير نشطة) للوحة الإدارة
+    [HttpGet("admin")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetAllAdmin()
+    {
+        var banners = await _db.Banners
+            .OrderBy(b => b.SortOrder)
+            .Select(b => new
+            {
+                b.Id,
+                b.Title,
+                b.SubTitle,
+                b.ImageUrl,
+                b.ActionUrl,
+                b.BackgroundColor,
+                b.SortOrder,
+                b.IsActive,
+                b.StartsAt,
+                b.EndsAt,
+                b.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(banners);
+    }
+
     // POST api/banners — admin only
     [HttpPost]
     [Authorize(Roles = "Admin")]

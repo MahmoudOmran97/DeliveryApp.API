@@ -56,6 +56,42 @@ public class DealsController : ControllerBase
         return Ok(deals);
     }
 
+    // GET api/deals/admin — كل العروض (نشطة وغير نشطة ومنتهية) للوحة الإدارة
+    [HttpGet("admin")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetAllAdmin()
+    {
+        var now = DateTime.UtcNow;
+        var deals = await _db.Deals
+            .Include(d => d.Restaurant)
+            .Include(d => d.Product)
+            .OrderByDescending(d => d.CreatedAt)
+            .Select(d => new
+            {
+                d.Id,
+                d.Title,
+                d.Description,
+                d.ImageUrl,
+                d.RestaurantId,
+                RestaurantName = d.Restaurant != null ? d.Restaurant.Name : null,
+                d.ProductId,
+                ProductName = d.Product != null ? d.Product.Name : null,
+                d.OriginalPrice,
+                d.DiscountedPrice,
+                d.DiscountPercent,
+                d.BadgeText,
+                d.BadgeColor,
+                d.IsActive,
+                d.SortOrder,
+                d.ExpiresAt,
+                d.CreatedAt,
+                IsExpired = d.ExpiresAt.HasValue && d.ExpiresAt < now
+            })
+            .ToListAsync();
+
+        return Ok(deals);
+    }
+
     // GET api/deals/by-restaurant/{restaurantId}
     [HttpGet("by-restaurant/{restaurantId}")]
     [AllowAnonymous]
