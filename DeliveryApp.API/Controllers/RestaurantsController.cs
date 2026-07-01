@@ -82,7 +82,9 @@ public class RestaurantsController : ControllerBase
                 r.MinOrderAmount,
                 r.EstimatedTime,
                 r.IsOpen,
-                r.StoreType
+                r.StoreType,
+                r.OwnerUserId,
+                OwnerName = r.Owner != null ? r.Owner.FullName : null
             })
             .ToListAsync();
 
@@ -111,6 +113,8 @@ public class RestaurantsController : ControllerBase
                     r.EstimatedTime,
                     r.IsOpen,
                     r.StoreType,
+                    r.OwnerUserId,
+                    r.OwnerName,
                     DistanceKm = distKm
                 };
             })
@@ -342,6 +346,17 @@ public class RestaurantsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(dto.CoverImageUrl))
             restaurant.CoverImageUrl = dto.CoverImageUrl;
 
+        if (User.IsInRole("Admin"))
+        {
+            restaurant.OwnerUserId = dto.OwnerUserId;
+            if (dto.OwnerUserId.HasValue)
+            {
+                var owner = await _context.Users.FindAsync(dto.OwnerUserId.Value);
+                if (owner != null && owner.Role != "Admin")
+                    owner.Role = "Restaurant";
+            }
+        }
+
         await _context.SaveChangesAsync();
         return Ok(new { message = "Restaurant updated successfully" });
     }
@@ -418,4 +433,5 @@ public class UpdateRestaurantDto
     public string? CoverImageUrl { get; set; }
     /// <summary>Restaurant | Pharmacy | Grocery | Supermarket | Vegetables | Drinks | Accessories</summary>
     public string? StoreType { get; set; }
+    public int? OwnerUserId { get; set; }
 }

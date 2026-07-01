@@ -152,6 +152,23 @@ namespace DeliveryApp.API.Controllers
                     await _context.SaveChangesAsync();
                 }
 
+                // Create driver profile when role is Driver
+                if (dto.Role == "Driver")
+                {
+                    _context.Drivers.Add(new Driver
+                    {
+                        UserId = user.Id,
+                        VehicleType = string.IsNullOrWhiteSpace(dto.VehicleType) ? "Motorcycle" : dto.VehicleType.Trim(),
+                        LicensePlate = string.IsNullOrWhiteSpace(dto.LicensePlate) ? "TBD" : dto.LicensePlate.Trim(),
+                        NationalId = dto.NationalId?.Trim(),
+                        IsVerified = false,
+                        IsOnline = false,
+                        IsAvailable = true,
+                        JoinedAt = DateTime.UtcNow
+                    });
+                    await _context.SaveChangesAsync();
+                }
+
                 return Ok(new { message = "User created successfully", user.Id, user.FullName, user.Email, user.Role });
             }
             catch (Microsoft.EntityFrameworkCore.DbUpdateException dbEx)
@@ -440,6 +457,9 @@ namespace DeliveryApp.API.Controllers
         public string Role { get; set; } = "Customer";
         public string? Address { get; set; }
         public int? RestaurantId { get; set; }
+        public string? VehicleType { get; set; }
+        public string? LicensePlate { get; set; }
+        public string? NationalId { get; set; }
     }
 
     public class AdminUpdateUserDto

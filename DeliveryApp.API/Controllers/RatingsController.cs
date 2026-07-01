@@ -142,11 +142,13 @@ namespace DeliveryApp.API.Controllers
     {
         private readonly ApplicationDbContext _context;
         private readonly IHubService _hubService;
+        private readonly IFcmService _fcm;
 
-        public NotificationsController(ApplicationDbContext context, IHubService hubService)
+        public NotificationsController(ApplicationDbContext context, IHubService hubService, IFcmService fcm)
         {
             _context = context;
             _hubService = hubService;
+            _fcm = fcm;
         }
 
         private int GetUserId() =>
@@ -244,6 +246,14 @@ namespace DeliveryApp.API.Controllers
                     Type = type,
                     dto.OrderId
                 });
+
+                await _fcm.SendToUserAsync(user.Id, dto.Title, dto.Body,
+                    new Dictionary<string, string>
+                    {
+                        ["type"] = type,
+                        ["orderId"] = dto.OrderId?.ToString() ?? ""
+                    });
+
                 sent++;
             }
 

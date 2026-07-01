@@ -127,11 +127,24 @@ namespace DeliveryApp.API.Controllers
         [Authorize(Roles = "Admin")]
         [HttpGet("admin")]
         public async Task<IActionResult> GetAllAdmin(
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
-            var total = await _context.Payments.CountAsync();
-            var payments = await _context.Payments
+            var query = _context.Payments.AsQueryable();
+
+            if (from.HasValue)
+                query = query.Where(p => (p.PaidAt ?? p.CreatedAt) >= from.Value.Date);
+
+            if (to.HasValue)
+            {
+                var toEnd = to.Value.Date.AddDays(1).AddTicks(-1);
+                query = query.Where(p => (p.PaidAt ?? p.CreatedAt) <= toEnd);
+            }
+
+            var total = await query.CountAsync();
+            var payments = await query
                 .OrderByDescending(p => p.CreatedAt)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)

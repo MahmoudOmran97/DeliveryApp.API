@@ -212,6 +212,19 @@ namespace DeliveryApp.API.Controllers
             {
                 var ownerLang = await GetUserLanguageAsync(restaurant.OwnerUserId.Value);
                 var ownerNotif = NotificationLocalizer.NewOrderForOwner(ownerLang, order.Id);
+
+                _context.Notifications.Add(new Notification
+                {
+                    UserId = restaurant.OwnerUserId.Value,
+                    Title = ownerNotif.Title,
+                    Body = ownerNotif.Body,
+                    Type = "NewOrder",
+                    OrderId = order.Id,
+                    CreatedAt = DateTime.UtcNow
+                });
+                await _context.SaveChangesAsync();
+
+                await _hubService.NotifyUserDirectly(restaurant.OwnerUserId.Value, "NewOrder", order.Id);
                 await _fcm.SendToUserAsync(restaurant.OwnerUserId.Value, ownerNotif.Title, ownerNotif.Body,
                     new Dictionary<string, string> { ["type"] = "NewOrder", ["orderId"] = order.Id.ToString() },
                     _context);
@@ -354,7 +367,9 @@ namespace DeliveryApp.API.Controllers
                     o.DeliveryNotes,
                     ItemCount = o.OrderItems.Count,
                     o.CreatedAt,
-                    o.DeliveredAt
+                    o.DeliveredAt,
+                    o.DriverId,
+                    DriverName = o.Driver != null ? o.Driver.User.FullName : null
                 })
                 .ToListAsync();
 
