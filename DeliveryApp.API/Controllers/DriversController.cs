@@ -303,6 +303,69 @@ namespace DeliveryApp.API.Controllers
             await _context.SaveChangesAsync();
             return Ok(new { message = "Driver verified successfully" });
         }
+
+        // ─────────────────────────────────────────────
+        // GET api/drivers/{id}/admin  — بيانات طيار واحد (لوحة الأدمن)
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Admin")]
+        [HttpGet("{id}/admin")]
+        public async Task<IActionResult> GetOneAdmin(int id)
+        {
+            var driver = await _context.Drivers
+                .Where(d => d.Id == id)
+                .Select(d => new
+                {
+                    d.Id,
+                    d.UserId,
+                    UserName = d.User.FullName,
+                    FullName = d.User.FullName,
+                    Email = d.User.Email,
+                    Phone = d.User.Phone,
+                    d.VehicleType,
+                    d.LicensePlate,
+                    d.NationalId,
+                    d.Rating,
+                    d.TotalRatings,
+                    d.TotalDeliveries,
+                    d.IsOnline,
+                    d.IsAvailable,
+                    d.IsVerified,
+                    d.JoinedAt
+                })
+                .FirstOrDefaultAsync();
+
+            if (driver == null) return NotFound(new { message = "Driver not found" });
+            return Ok(driver);
+        }
+
+        // ─────────────────────────────────────────────
+        // PUT api/drivers/{id}/admin-update  [Admin] — تعديل بيانات الطيار (المركبة/الرخصة/الرقم القومي/التوثيق)
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Admin")]
+        [HttpPut("{id}/admin-update")]
+        public async Task<IActionResult> AdminUpdateDriver(int id, [FromBody] AdminUpdateDriverDto dto)
+        {
+            var driver = await _context.Drivers.FindAsync(id);
+            if (driver == null) return NotFound(new { message = "Driver not found" });
+
+            if (!string.IsNullOrWhiteSpace(dto.VehicleType))
+                driver.VehicleType = dto.VehicleType.Trim();
+
+            if (!string.IsNullOrWhiteSpace(dto.LicensePlate))
+                driver.LicensePlate = dto.LicensePlate.Trim();
+
+            if (dto.NationalId != null)
+                driver.NationalId = dto.NationalId.Trim();
+
+            if (dto.IsVerified.HasValue)
+                driver.IsVerified = dto.IsVerified.Value;
+
+            if (dto.IsAvailable.HasValue)
+                driver.IsAvailable = dto.IsAvailable.Value;
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Driver updated successfully" });
+        }
     }
 
     // DTOs
@@ -311,6 +374,15 @@ namespace DeliveryApp.API.Controllers
         public string VehicleType { get; set; } = string.Empty;
         public string LicensePlate { get; set; } = string.Empty;
         public string? NationalId { get; set; }
+    }
+
+    public class AdminUpdateDriverDto
+    {
+        public string? VehicleType { get; set; }
+        public string? LicensePlate { get; set; }
+        public string? NationalId { get; set; }
+        public bool? IsVerified { get; set; }
+        public bool? IsAvailable { get; set; }
     }
 
     public class UpdateLocationDto
