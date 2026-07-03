@@ -1,4 +1,5 @@
 ﻿using DeliveryApp.API.Models;
+using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -9,8 +10,13 @@ namespace DeliveryApp.API.Hubs
     public class TrackingHub : Hub
     {
         private readonly ApplicationDbContext _context;
+        private readonly IFcmService _fcm;
 
-        public TrackingHub(ApplicationDbContext context) => _context = context;
+        public TrackingHub(ApplicationDbContext context, IFcmService fcm)
+        {
+            _context = context;
+            _fcm = fcm;
+        }
 
         // ─────────────────────────────────────────────
         // العميل أو الدرايفر بيدخل غرفة الطلب
@@ -197,11 +203,77 @@ namespace DeliveryApp.API.Hubs
                 return;
             }
 
+            // الطرف التاني اللي المفروض يرن عنده
+            var calleeUserId = isCustomer ? order.Driver?.UserId : order.CustomerId;
+
+            // 1) لو فاتح الأبليكيشن ومتصل بالـ SignalR دلوقتي، هيوصله فوراً real-time
             await Clients.Group($"order_{orderId}").SendAsync("IncomingVoiceCall", new
             {
                 orderId,
                 callerId = userId
             });
+
+            // 2) وابعتله كمان FCM data push عالي الأولوية، عشان يرن حتى لو الأبليكيشن
+            //    مقفول تماماً (زي الميسنجر/واتساب). الأبليكيشن هو اللي هيستقبل الـ data
+            //    ده ويعرض شاشة "مكالمة واردة" (شوف Platforms/Android full-screen notification).
+            if (calleeUserId.HasValue)
+            {
+                await _fcm.SendToUserAsync(
+                    calleeUserId.Value,
+                    title: "مكالمة واردة",
+                    body: "عندك مكالمة صوتية داخل التطبيق",
+                    data: new Dictionary<string, string>
+                    {
+                        ["type"] = "IncomingCall",
+                        ["orderId"] = orderId.ToString(),
+                        ["callerId"] = userId.ToString()
+                    },
+                    db: _context);
+            }
+        }
+
+        public async Task AcceptVoiceCall(int orderId)
+        {
+            var userId = GetUserId();
+            await Clients.Group($"order_{orderId}")
+                .SendAsync("VoiceCallAccepted", new { orderId, byUserId = userId });
+        }
+
+        // ═══ WebRTC signaling relay (SIPSorcery on both ends handles the actual media) ═══
+        // الـ Hub هنا بس "بوسطجي" — بيمرر رسائل SDP/ICE بين الطرفين، مش بيلمس محتواها.
+        public async Task SendCallOffer(int orderId, string sdp)
+        {
+            var userId = GetUserId();
+            await Clients.OthersInGroup($"order_{orderId}")
+                .SendAsync("CallOfferReceived", new { orderId, fromUserId = userId, sdp });
+        }
+
+        public async Task SendCallAnswer(int orderId, string sdp)
+        {
+            var userId = GetUserId();
+            await Clients.OthersInGroup($"order_{orderId}")
+                .SendAsync("CallAnswerReceived", new { orderId, fromUserId = userId, sdp });
+        }
+
+        public async Task SendIceCandidate(int orderId, string candidateJson)
+        {
+            var userId = GetUserId();
+            await Clients.OthersInGroup($"order_{orderId}")
+                .SendAsync("IceCandidateReceived", new { orderId, fromUserId = userId, candidateJson });
+        }
+
+        public async Task RejectVoiceCall(int orderId)
+        {
+            var userId = GetUserId();
+            await Clients.Group($"order_{orderId}")
+                .SendAsync("VoiceCallRejected", new { orderId, byUserId = userId });
+        }
+
+        public async Task EndVoiceCall(int orderId)
+        {
+            var userId = GetUserId();
+            await Clients.Group($"order_{orderId}")
+                .SendAsync("VoiceCallEnded", new { orderId, byUserId = userId });
         }
 
         // ─────────────────────────────────────────────
