@@ -206,10 +206,12 @@ namespace DeliveryApp.API.Controllers
         // POST api/products/{id}/variants
         [AllowAnonymous]
         [HttpPost("{id:int}/variants")]
-        public async Task<IActionResult> SetVariants(int id, [FromBody] List<VariantDto> variants)
+        public async Task<IActionResult> SetVariants(int id, [FromBody] List<VariantDto>? variants)
         {
             var product = await _context.Products.FindAsync(id);
             if (product == null) return NotFound();
+
+            variants ??= new List<VariantDto>();
 
             var existing = await _context.ProductVariants.Where(v => v.ProductId == id).ToListAsync();
             _context.ProductVariants.RemoveRange(existing);
