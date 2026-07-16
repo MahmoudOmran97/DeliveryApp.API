@@ -19,6 +19,10 @@ builder.Services.AddHttpClient("fcm");
 builder.Services.AddScoped<IFcmService, FcmService>();
 builder.Services.AddScoped<IPointsService, PointsService>();
 
+// ✅ الجديد: خدمات الـ OTP (إرسال إيميل + توليد/تحقق الكود)
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IOtpService, OtpService>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -90,11 +94,11 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
-// ?????????????????????????????????????????????????????????????
-// BUG FIX B: ???? ChatMessages ?? ????? ?? ?????????
-// ???? ????? ??? DbContext ???? migration
-// ????: ???? CREATE TABLE IF NOT EXISTS ??? startup
-// ?????????????????????????????????????????????????????????????
+// ─────────────────────────────────────────────────────────────
+// BUG FIX B: عمود ChatMessages مش موجود في الداتابيز
+// المفروض يتعمل عن طريق DbContext لكن migration
+// بدلاً: عمل CREATE TABLE IF NOT EXISTS جوا startup
+// ─────────────────────────────────────────────────────────────
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -214,7 +218,7 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        // log only ? don't crash the app
+        // log only – don't crash the app
         Console.WriteLine($"[Startup] ChatMessages table check failed: {ex.Message}");
     }
     // ── Create Banners table ──────────────────────────────────────────────────
@@ -418,6 +422,28 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] Points schema ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] Points schema failed: {ex.Message}"); }
+
+    // ── ✅ الجديد: Create OtpCodes table (كود التحقق للتسجيل ونسيت كلمة المرور) ──
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'OtpCodes')
+            BEGIN
+                CREATE TABLE [dbo].[OtpCodes] (
+                    [Id]        INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [Email]     NVARCHAR(150)  NOT NULL,
+                    [Code]      NVARCHAR(10)   NOT NULL,
+                    [Purpose]   NVARCHAR(30)   NOT NULL,
+                    [IsUsed]    BIT            NOT NULL DEFAULT 0,
+                    [ExpiresAt] DATETIME2      NOT NULL,
+                    [CreatedAt] DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+                );
+                CREATE INDEX [IX_OtpCodes_Email_Purpose] ON [dbo].[OtpCodes]([Email],[Purpose]);
+            END
+        ");
+        Console.WriteLine("[Startup] OtpCodes table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] OtpCodes table check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();
