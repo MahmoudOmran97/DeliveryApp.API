@@ -6,6 +6,7 @@
 
 using DeliveryApp.API.Authorization;
 using DeliveryApp.API.Models;
+using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -91,12 +92,22 @@ public class RestaurantsController : ControllerBase
         // ── in-memory location filter (Haversine) ────────────────────────────
         bool useLocation = lat.HasValue && lng.HasValue;
 
+        // نجيب إعدادات التوصيل مرة واحدة بس قبل اللوب (قابلة للتعديل من الأدمن)
+        var (freeRadiusKm, extraFeePerKm) = useLocation
+            ? await DeliveryFeeCalculator.GetSettingsAsync(_context)
+            : (DeliveryFeeCalculator.DefaultFreeRadiusKm, DeliveryFeeCalculator.DefaultExtraFeePerKm);
+
         var projected = dbList
             .Select(r =>
             {
                 double? distKm = useLocation
-                    ? GetDistance(lat!.Value, lng!.Value, r.Latitude, r.Longitude)
+                    ? DeliveryFeeCalculator.GetDistanceKm(lat!.Value, lng!.Value, r.Latitude, r.Longitude)
                     : (double?)null;
+
+                // لو معانا موقع العميل، نحسب سعر التوصيل الفعلي (أساسي + زيادة المسافة)
+                var effectiveDeliveryFee = distKm.HasValue
+                    ? DeliveryFeeCalculator.Calculate(r.DeliveryFee, distKm.Value, freeRadiusKm, extraFeePerKm)
+                    : r.DeliveryFee;
 
                 return new
                 {
@@ -108,7 +119,7 @@ public class RestaurantsController : ControllerBase
                     r.CoverImageUrl,
                     r.Rating,
                     r.TotalRatings,
-                    r.DeliveryFee,
+                    DeliveryFee = effectiveDeliveryFee,
                     r.MinOrderAmount,
                     r.EstimatedTime,
                     r.IsOpen,
@@ -138,7 +149,7 @@ public class RestaurantsController : ControllerBase
 
     // ─── GET /api/restaurants/{id}  (public) ────────────────────────────────
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetById(int id)
+    public async Task<IActionResult> GetById(int id, [FromQuery] double? lat, [FromQuery] double? lng)
     {
         var restaurant = await _context.Restaurants
             .Where(r => r.Id == id && r.IsActive)
@@ -155,7 +166,7 @@ public class RestaurantsController : ControllerBase
                 r.Phone,
                 r.Rating,
                 r.TotalRatings,
-                r.DeliveryFee,
+                BaseDeliveryFee = r.DeliveryFee,
                 r.MinOrderAmount,
                 r.EstimatedTime,
                 r.IsOpen,
@@ -170,7 +181,41 @@ public class RestaurantsController : ControllerBase
         if (restaurant == null)
             return NotFound(new { message = "Restaurant not found" });
 
-        return Ok(restaurant);
+        double? distanceKm = (lat.HasValue && lng.HasValue)
+            ? DeliveryFeeCalculator.GetDistanceKm(lat.Value, lng.Value, restaurant.Latitude, restaurant.Longitude)
+            : (double?)null;
+
+        decimal effectiveDeliveryFee = restaurant.BaseDeliveryFee;
+        if (distanceKm.HasValue)
+        {
+            var (freeRadiusKm, extraFeePerKm) = await DeliveryFeeCalculator.GetSettingsAsync(_context);
+            effectiveDeliveryFee = DeliveryFeeCalculator.Calculate(restaurant.BaseDeliveryFee, distanceKm.Value, freeRadiusKm, extraFeePerKm);
+        }
+
+        return Ok(new
+        {
+            restaurant.Id,
+            restaurant.Name,
+            restaurant.Description,
+            restaurant.Address,
+            restaurant.Latitude,
+            restaurant.Longitude,
+            restaurant.ImageUrl,
+            restaurant.CoverImageUrl,
+            restaurant.Phone,
+            restaurant.Rating,
+            restaurant.TotalRatings,
+            DeliveryFee = effectiveDeliveryFee,
+            restaurant.MinOrderAmount,
+            restaurant.EstimatedTime,
+            restaurant.IsOpen,
+            restaurant.IsActive,
+            restaurant.StoreType,
+            restaurant.OwnerUserId,
+            restaurant.OwnerName,
+            restaurant.OwnerEmail,
+            DistanceKm = distanceKm
+        });
     }
 
     // ─── GET /api/restaurants/{id}/menu  (public) ───────────────────────────
@@ -386,18 +431,6 @@ public class RestaurantsController : ControllerBase
         });
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
-    private static double GetDistance(double lat1, double lon1, double lat2, double lon2)
-    {
-        const double R = 6371;
-        var dLat = ToRad(lat2 - lat1);
-        var dLon = ToRad(lon2 - lon1);
-        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2)
-              + Math.Cos(ToRad(lat1)) * Math.Cos(ToRad(lat2))
-              * Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
-        return R * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
-    }
-    private static double ToRad(double deg) => deg * (Math.PI / 180);
 }
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────

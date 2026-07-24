@@ -51,6 +51,9 @@ public partial class ApplicationDbContext : DbContext
     // ✅ الجديد: جدول أكواد الـ OTP (تسجيل / نسيت كلمة المرور)
     public virtual DbSet<OtpCode> OtpCodes { get; set; }
 
+    // ✅ الجديد: إعدادات سعر التوصيل (قابلة للتعديل من الأدمن)
+    public virtual DbSet<DeliverySettings> DeliverySettings { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
     }

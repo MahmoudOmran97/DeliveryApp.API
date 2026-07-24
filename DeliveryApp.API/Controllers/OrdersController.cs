@@ -96,8 +96,17 @@ namespace DeliveryApp.API.Controllers
                 };
             }).ToList();
 
+            // ── حساب سعر التوصيل الفعلي حسب المسافة الحقيقية بين المحل والعميل ──
+            // أول FreeRadiusKm كم بسعر المحل الأساسي (restaurant.DeliveryFee)، وبعدها
+            // ExtraFeePerKm جنيه على كل كيلومتر زيادة أو جزء منه (قابلين للتعديل من الأدمن).
+            var (freeRadiusKm, extraFeePerKm) = await DeliveryFeeCalculator.GetSettingsAsync(_context);
+            var distanceKm = DeliveryFeeCalculator.GetDistanceKm(
+                restaurant.Latitude, restaurant.Longitude,
+                dto.DeliveryLatitude, dto.DeliveryLongitude);
+            var deliveryFee = DeliveryFeeCalculator.Calculate(restaurant.DeliveryFee, distanceKm, freeRadiusKm, extraFeePerKm);
+
             var subTotal = orderItems.Sum(i => i.UnitPrice * i.Quantity);
-            var total = subTotal + restaurant.DeliveryFee;
+            var total = subTotal + deliveryFee;
             decimal discount = 0;
 
             // Apply coupon if provided
@@ -148,7 +157,7 @@ namespace DeliveryApp.API.Controllers
                 }
             }
 
-            total = subTotal + restaurant.DeliveryFee - discount;
+            total = subTotal + deliveryFee - discount;
 
             var isPrescriptionOnly = !string.IsNullOrWhiteSpace(dto.PrescriptionImageUrl) && !orderItems.Any();
             if (!isPrescriptionOnly && total < restaurant.MinOrderAmount)
@@ -160,7 +169,7 @@ namespace DeliveryApp.API.Controllers
                 RestaurantId = dto.RestaurantId,
                 Status = "Pending",
                 SubTotal = subTotal,
-                DeliveryFee = restaurant.DeliveryFee,
+                DeliveryFee = deliveryFee,
                 Discount = discount,
                 TotalAmount = total,
                 DeliveryAddress = dto.DeliveryAddress,

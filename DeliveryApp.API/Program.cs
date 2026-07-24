@@ -443,7 +443,29 @@ using (var scope = app.Services.CreateScope())
         ");
         Console.WriteLine("[Startup] OtpCodes table ready.");
     }
-    catch (Exception ex) { Console.WriteLine($"[Startup] OtpCodes table check failed: {ex.Message}"); }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Startup] OtpCodes table check failed: {ex.Message}");
+    }
+
+    // ── ✅ الجديد: Create DeliverySettings table (إعدادات سعر التوصيل القابلة للتعديل) ──
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'DeliverySettings')
+            BEGIN
+                CREATE TABLE [dbo].[DeliverySettings] (
+                    [Id]            INT           IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [FreeRadiusKm]  FLOAT         NOT NULL DEFAULT 3.0,
+                    [ExtraFeePerKm] DECIMAL(10,2) NOT NULL DEFAULT 10.0,
+                    [UpdatedAt]     DATETIME2     NOT NULL DEFAULT GETUTCDATE()
+                );
+                INSERT INTO [dbo].[DeliverySettings] ([FreeRadiusKm],[ExtraFeePerKm]) VALUES (3.0, 10.0);
+            END
+        ");
+        Console.WriteLine("[Startup] DeliverySettings table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] DeliverySettings table check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();
