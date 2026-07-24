@@ -275,7 +275,7 @@ public class RestaurantsController : ControllerBase
                 r.DeliveryFee,
                 r.EstimatedTime,
                 r.IsOpen,
-                DistanceKm = GetDistance(lat, lng, r.Latitude, r.Longitude)
+                DistanceKm = DeliveryFeeCalculator.GetDistanceKm(lat, lng, r.Latitude, r.Longitude)
             })
             .Where(r => r.DistanceKm <= radiusKm)
             .OrderBy(r => r.DistanceKm).ToList();
