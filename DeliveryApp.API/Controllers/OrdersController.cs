@@ -438,7 +438,17 @@ namespace DeliveryApp.API.Controllers
                         i.UnitPrice,
                         i.TotalPrice,
                         i.Notes
-                    })
+                    }),
+                    // ✅ لو الأوردر اتقيم قبل كده، ابعت التقييم عشان الابلكيشن
+                    // يعرضه بدل ما يفضل يطلب من العميل يقيم تاني
+                    Rating = o.Rating == null ? null : new
+                    {
+                        o.Rating.RestaurantRating,
+                        o.Rating.DriverRating,
+                        o.Rating.FoodRating,
+                        o.Rating.Comment,
+                        o.Rating.CreatedAt
+                    }
                 })
                 .FirstOrDefaultAsync();
 
