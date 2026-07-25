@@ -61,6 +61,43 @@ builder.Services.AddAuthentication(options =>
             if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
                 context.Token = accessToken;
             return Task.CompletedTask;
+        },
+
+        // ✅ فحص حالة الحساب مع كل توكن بيتحقق منه (سواء API عادي أو اتصال SignalR).
+        // لو الأدمن قفل الحساب، أي طلب جاي بالتوكن ده هيترفض فوراً بكود مميز
+        // (ACCOUNT_DEACTIVATED) عشان الأبليكيشن عند العميل يعرف يعمل logout فوري،
+        // حتى لو مكنش مستني إشعار SignalR/FCM.
+        OnTokenValidated = async context =>
+        {
+            var userIdClaim = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+                             ?? context.Principal?.FindFirst("sub");
+
+            if (userIdClaim != null && int.TryParse(userIdClaim.Value, out var userId))
+            {
+                var db = context.HttpContext.RequestServices.GetRequiredService<ApplicationDbContext>();
+                var isActive = await db.Users.AsNoTracking()
+                    .Where(u => u.Id == userId)
+                    .Select(u => (bool?)u.IsActive)
+                    .FirstOrDefaultAsync();
+
+                if (isActive != true)
+                {
+                    context.HttpContext.Items["AccountDeactivated"] = true;
+                    context.Fail("Account is deactivated");
+                }
+            }
+        },
+
+        OnChallenge = async context =>
+        {
+            if (context.HttpContext.Items.ContainsKey("AccountDeactivated"))
+            {
+                context.HandleResponse();
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(
+                    "{\"code\":\"ACCOUNT_DEACTIVATED\",\"message\":\"Your account has been deactivated\"}");
+            }
         }
     };
 });

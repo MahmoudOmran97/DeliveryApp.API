@@ -14,11 +14,35 @@ namespace DeliveryApp.API.Controllers
     {
         private readonly ApplicationDbContext _context;
         private readonly IPointsService _points;
+        private readonly IHubService _hub;
+        private readonly IFcmService _fcm;
 
-        public UserController(ApplicationDbContext context, IPointsService points)
+        public UserController(ApplicationDbContext context, IPointsService points, IHubService hub, IFcmService fcm)
         {
             _context = context;
             _points = points;
+            _hub = hub;
+            _fcm = fcm;
+        }
+
+        // بيبعت إشعار فوري (SignalR + FCM) لما حالة تفعيل الحساب تتغيّر، عشان
+        // الأبليكيشن يوقف نفسه فوراً عند العميل لو اتقفل حسابه، حتى لو
+        // الأبليكيشن شغال دلوقتي أو مقفول تماماً.
+        private async Task NotifyAccountStatusChangedAsync(int userId, bool isActive)
+        {
+            // 1) SignalR — لو الأبليكيشن فاتح ومتصل دلوقتي، هيوصله فوراً real-time
+            await _hub.NotifyUserDirectly(userId, "AccountStatusChanged", new { isActive });
+
+            // 2) FCM data push — عشان يوصل حتى لو الأبليكيشن في الخلفية أو مقفول تماماً
+            if (!isActive)
+            {
+                await _fcm.SendToUserAsync(
+                    userId,
+                    title: "الحساب موقوف",
+                    body: "تم إيقاف حسابك من قبل الإدارة",
+                    data: new Dictionary<string, string> { ["type"] = "AccountDeactivated" },
+                    db: _context);
+            }
         }
 
         private int GetUserId()
@@ -129,12 +153,12 @@ namespace DeliveryApp.API.Controllers
                 var user = new User
                 {
                     FullName = dto.FullName.Trim(),
-                    Email    = dto.Email.Trim().ToLower(),
-                    Phone    = dto.Phone.Trim(),
-                    Role     = dto.Role,
-                    Address  = dto.Address?.Trim(),
+                    Email = dto.Email.Trim().ToLower(),
+                    Phone = dto.Phone.Trim(),
+                    Role = dto.Role,
+                    Address = dto.Address?.Trim(),
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
-                    IsActive  = true,
+                    IsActive = true,
                     CreatedAt = DateTime.UtcNow
                 };
 
@@ -195,8 +219,8 @@ namespace DeliveryApp.API.Controllers
             try
             {
                 if (!string.IsNullOrWhiteSpace(dto.FullName)) user.FullName = dto.FullName.Trim();
-                if (!string.IsNullOrWhiteSpace(dto.Phone))    user.Phone    = dto.Phone.Trim();
-                if (dto.Address != null)                       user.Address  = dto.Address.Trim();
+                if (!string.IsNullOrWhiteSpace(dto.Phone)) user.Phone = dto.Phone.Trim();
+                if (dto.Address != null) user.Address = dto.Address.Trim();
                 if (!string.IsNullOrWhiteSpace(dto.Role))
                 {
                     var allowedRoles = new[] { "Admin", "Restaurant", "Driver", "Customer" };
@@ -204,12 +228,16 @@ namespace DeliveryApp.API.Controllers
                         return BadRequest(new { message = $"Invalid role. Allowed: {string.Join(", ", allowedRoles)}" });
                     user.Role = dto.Role;
                 }
+                bool activeStatusChanged = dto.IsActive.HasValue && dto.IsActive.Value != user.IsActive;
                 if (dto.IsActive.HasValue) user.IsActive = dto.IsActive.Value;
                 if (!string.IsNullOrWhiteSpace(dto.Password))
                     user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
 
                 user.UpdatedAt = DateTime.UtcNow;
                 await _context.SaveChangesAsync();
+
+                if (activeStatusChanged)
+                    await NotifyAccountStatusChangedAsync(user.Id, user.IsActive);
 
                 if (dto.RestaurantId.HasValue && user.Role == "Restaurant")
                 {
@@ -248,6 +276,8 @@ namespace DeliveryApp.API.Controllers
             user.IsActive = !user.IsActive;
             user.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
+
+            await NotifyAccountStatusChangedAsync(user.Id, user.IsActive);
 
             return Ok(new { message = user.IsActive ? "User activated" : "User deactivated", user.IsActive });
         }
