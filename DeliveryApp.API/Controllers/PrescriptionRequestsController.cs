@@ -124,6 +124,47 @@ public class PrescriptionRequestsController : ControllerBase
         return Ok(list);
     }
 
+    // ─────────────────────────────────────────────
+    // GET api/prescriptionrequests/admin — كل طلبات الروشتة (لوحة صاحب المنصة)
+    // /restaurant بيفشل للأدمن لو حسابه مش مربوط بصيدلية، فده الإندبوينت اللي
+    // تطبيق الأدمن يعتمد عليه عشان يشوف كل الروشتات من غير ما يتحذف أي حاجة.
+    // ─────────────────────────────────────────────
+    [HttpGet("admin")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> GetAllAdmin(
+        [FromQuery] string? status,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
+    {
+        var query = _context.PrescriptionRequests.AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(status))
+            query = query.Where(r => r.Status == status);
+
+        var total = await query.CountAsync();
+        var list = await query
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(r => new
+            {
+                r.Id,
+                r.CustomerId,
+                CustomerName = r.Customer != null ? r.Customer.FullName : null,
+                r.RestaurantId,
+                RestaurantName = r.Restaurant != null ? r.Restaurant.Name : null,
+                r.ImageUrl,
+                r.Notes,
+                r.Status,
+                r.AgreedPrice,
+                r.OrderId,
+                r.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new { total, page, pageSize, items = list });
+    }
+
     // GET api/prescriptionrequests/{id}
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(int id)
