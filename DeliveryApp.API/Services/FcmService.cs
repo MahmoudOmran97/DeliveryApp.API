@@ -79,6 +79,10 @@ public class FcmService : IFcmService
             //
             // android.priority = "high" ensures delivery even in Doze mode.
 
+            // ✅ DATA-ONLY (مفيش مفتاح notification) — ضروري عشان Android ينادي
+            // onMessageReceived حتى لو الأبليكيشن في الخلفية أو مقفول، وده اللي بيخلّي
+            // IncomingCallActivity تظهر فوق الشاشة زي واتساب.
+            // لو حطيت notification key، النظام بيعرض نوتيفيكيشن عادي ومش بيشغّل الكود بتاعنا.
             var dataPayload = new Dictionary<string, string>(data ?? new())
             {
                 ["title"] = title,
@@ -90,10 +94,13 @@ public class FcmService : IFcmService
                 message = new
                 {
                     token = fcmToken,
-                    notification = new { title, body },
                     android = new
                     {
-                        priority = "high"
+                        priority = "high",
+                        // TTL قصير للمكالمات — لو مفيش رد خلال دقيقة ملهاش لازمة
+                        ttl = dataPayload.TryGetValue("type", out var t) && t == "IncomingCall"
+                            ? "60s"
+                            : "86400s"
                     },
                     data = dataPayload
                 }

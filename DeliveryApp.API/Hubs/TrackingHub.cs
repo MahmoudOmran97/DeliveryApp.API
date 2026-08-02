@@ -206,18 +206,18 @@ namespace DeliveryApp.API.Hubs
             // الطرف التاني اللي المفروض يرن عنده
             var calleeUserId = isCustomer ? order.Driver?.UserId : order.CustomerId;
 
-            // 1) لو فاتح الأبليكيشن ومتصل بالـ SignalR دلوقتي، هيوصله فوراً real-time
-            await Clients.Group($"order_{orderId}").SendAsync("IncomingVoiceCall", new
-            {
-                orderId,
-                callerId = userId
-            });
-
-            // 2) وابعتله كمان FCM data push عالي الأولوية، عشان يرن حتى لو الأبليكيشن
-            //    مقفول تماماً (زي الميسنجر/واتساب). الأبليكيشن هو اللي هيستقبل الـ data
-            //    ده ويعرض شاشة "مكالمة واردة" (شوف Platforms/Android full-screen notification).
+            // 1) نبعت على جروب اليوزر الشخصي (user_{id}) — بيتضاف تلقائي في OnConnectedAsync
+            //    فبيوصله حتى لو مش داخل على شاشة الأوردر / مش منضم لـ order_{id}.
+            //    (القديم كان order group بس → المكالمة بتضيع لو مش على صفحة التتبع)
             if (calleeUserId.HasValue)
             {
+                await Clients.Group($"user_{calleeUserId.Value}").SendAsync("IncomingVoiceCall", new
+                {
+                    orderId,
+                    callerId = userId
+                });
+
+                // 2) FCM data push عالي الأولوية — يرن حتى لو الأبليكيشن مقفول (full-screen notif)
                 await _fcm.SendToUserAsync(
                     calleeUserId.Value,
                     title: "مكالمة واردة",
@@ -229,6 +229,14 @@ namespace DeliveryApp.API.Hubs
                         ["callerId"] = userId.ToString()
                     },
                     db: _context);
+            }
+            else
+            {
+                await Clients.OthersInGroup($"order_{orderId}").SendAsync("IncomingVoiceCall", new
+                {
+                    orderId,
+                    callerId = userId
+                });
             }
         }
 

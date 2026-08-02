@@ -43,6 +43,15 @@ public class Coupon
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// لو مش null يبقى الكوبون خاص بمستخدم معين (مثلاً من استبدال النقاط).
+    /// لو null يبقى كوبون عام من الأدمن لكل العملاء.
+    /// </summary>
+    public int? OwnerUserId { get; set; }
+
     [ForeignKey("RestaurantId")]
     public virtual Restaurant? Restaurant { get; set; }
+
+    [ForeignKey("OwnerUserId")]
+    public virtual User? OwnerUser { get; set; }
 }
