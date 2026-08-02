@@ -147,6 +147,46 @@ public class RestaurantsController : ControllerBase
         });
     }
 
+    // ─── GET /api/restaurants/me  (صاحب المحل بحسابه، من غير ما يعرف الـ Id) ──
+    [Authorize(Roles = "Restaurant,Admin")]
+    [HttpGet("me")]
+    public async Task<IActionResult> GetMine()
+    {
+        var restaurantId = await RestaurantOwnerAuth.GetOwnerRestaurantIdAsync(User, _context);
+        if (restaurantId == null) return NotFound(new { message = "مفيش محل مرتبط بالحساب ده" });
+
+        var restaurant = await _context.Restaurants
+            .Where(r => r.Id == restaurantId.Value)
+            .Select(r => new
+            {
+                r.Id,
+                r.Name,
+                r.Description,
+                r.Address,
+                r.Latitude,
+                r.Longitude,
+                r.ImageUrl,
+                r.CoverImageUrl,
+                r.Phone,
+                r.Rating,
+                r.TotalRatings,
+                DeliveryFee = r.DeliveryFee,
+                r.MinOrderAmount,
+                r.EstimatedTime,
+                r.IsOpen,
+                r.IsActive,
+                r.StoreType,
+                r.OwnerUserId,
+                OwnerName = r.Owner != null ? r.Owner.FullName : null,
+                OwnerEmail = r.Owner != null ? r.Owner.Email : null,
+                r.CreatedAt
+            })
+            .FirstOrDefaultAsync();
+
+        if (restaurant == null) return NotFound(new { message = "Restaurant not found" });
+        return Ok(restaurant);
+    }
+
     // ─── GET /api/restaurants/{id}  (public) ────────────────────────────────
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(int id, [FromQuery] double? lat, [FromQuery] double? lng)

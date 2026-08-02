@@ -1,3 +1,4 @@
+using DeliveryApp.API.Authorization;
 using DeliveryApp.API.Models;
 using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -560,7 +561,7 @@ namespace DeliveryApp.API.Controllers
         // GET api/orders/restaurant/{restaurantId}
         // خاص ببرنامج سطح المكتب للمطعم
         // ─────────────────────────────────────────────
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpGet("restaurant/{restaurantId}")]
         public async Task<IActionResult> GetByRestaurant(
             int restaurantId,
@@ -568,6 +569,9 @@ namespace DeliveryApp.API.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, restaurantId, _context);
+            if (authError != null) return authError;
+
             var query = _context.Orders
                 .Where(o => o.RestaurantId == restaurantId)
                 .AsQueryable();

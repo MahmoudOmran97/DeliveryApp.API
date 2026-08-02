@@ -1,4 +1,5 @@
-﻿using DeliveryApp.API.Models;
+﻿using DeliveryApp.API.Authorization;
+using DeliveryApp.API.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -135,12 +136,15 @@ namespace DeliveryApp.API.Controllers
         }
 
         // POST api/products  [Admin or Restaurant Desktop]
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateProductDto dto)
         {
-            var categoryExists = await _context.Categories.AnyAsync(c => c.Id == dto.CategoryId);
-            if (!categoryExists) return BadRequest(new { message = "Category not found" });
+            var category = await _context.Categories.FirstOrDefaultAsync(c => c.Id == dto.CategoryId);
+            if (category == null) return BadRequest(new { message = "Category not found" });
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, category.RestaurantId, _context);
+            if (authError != null) return authError;
 
             var product = new Product
             {
@@ -163,12 +167,15 @@ namespace DeliveryApp.API.Controllers
         }
 
         // PUT api/products/{id}  [Admin or Restaurant Desktop]
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(int id, [FromBody] CreateProductDto dto)
         {
-            var product = await _context.Products.FindAsync(id);
+            var product = await _context.Products.Include(p => p.Category).FirstOrDefaultAsync(p => p.Id == id);
             if (product == null) return NotFound();
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, product.Category.RestaurantId, _context);
+            if (authError != null) return authError;
 
             product.Name = dto.Name; product.Description = dto.Description;
             product.Price = dto.Price; product.DiscountedPrice = dto.DiscountedPrice;
@@ -179,12 +186,15 @@ namespace DeliveryApp.API.Controllers
         }
 
         // PUT api/products/{id}/toggle-availability  [Admin or Restaurant Desktop]
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpPut("{id}/toggle-availability")]
         public async Task<IActionResult> ToggleAvailability(int id)
         {
-            var product = await _context.Products.FindAsync(id);
+            var product = await _context.Products.Include(p => p.Category).FirstOrDefaultAsync(p => p.Id == id);
             if (product == null) return NotFound();
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, product.Category.RestaurantId, _context);
+            if (authError != null) return authError;
 
             product.IsAvailable = !product.IsAvailable;
             await _context.SaveChangesAsync();
@@ -192,24 +202,31 @@ namespace DeliveryApp.API.Controllers
         }
 
         // DELETE api/products/{id}  [Admin or Restaurant Desktop]
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
-            var product = await _context.Products.FindAsync(id);
+            var product = await _context.Products.Include(p => p.Category).FirstOrDefaultAsync(p => p.Id == id);
             if (product == null) return NotFound();
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, product.Category.RestaurantId, _context);
+            if (authError != null) return authError;
+
             product.IsActive = false; // Soft delete
             await _context.SaveChangesAsync();
             return Ok(new { message = "Product deleted" });
         }
 
         // POST api/products/{id}/variants
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpPost("{id:int}/variants")]
         public async Task<IActionResult> SetVariants(int id, [FromBody] List<VariantDto>? variants)
         {
-            var product = await _context.Products.FindAsync(id);
+            var product = await _context.Products.Include(p => p.Category).FirstOrDefaultAsync(p => p.Id == id);
             if (product == null) return NotFound();
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, product.Category.RestaurantId, _context);
+            if (authError != null) return authError;
 
             variants ??= new List<VariantDto>();
 

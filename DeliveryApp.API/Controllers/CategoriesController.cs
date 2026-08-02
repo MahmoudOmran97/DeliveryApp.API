@@ -1,4 +1,5 @@
-﻿using DeliveryApp.API.Models;
+﻿using DeliveryApp.API.Authorization;
+using DeliveryApp.API.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -72,7 +73,7 @@ namespace DeliveryApp.API.Controllers
         // POST api/categories
         // إضافة قسم جديد لمطعم
         // ─────────────────────────────────────────────────────────────────
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateCategoryDto dto)
         {
@@ -84,6 +85,9 @@ namespace DeliveryApp.API.Controllers
 
             if (!restaurantExists)
                 return BadRequest(new { message = "Restaurant not found" });
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, dto.RestaurantId, _context);
+            if (authError != null) return authError;
 
             // تحديد الترتيب التلقائي
             var maxSort = await _context.Categories
@@ -111,7 +115,7 @@ namespace DeliveryApp.API.Controllers
         // PUT api/categories/{id}
         // تعديل بيانات قسم موجود
         // ─────────────────────────────────────────────────────────────────
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpPut("{id}")]
         public async Task<IActionResult> Update(int id, [FromBody] UpdateCategoryDto dto)
         {
@@ -121,6 +125,9 @@ namespace DeliveryApp.API.Controllers
             var category = await _context.Categories.FindAsync(id);
             if (category == null || !category.IsActive)
                 return NotFound(new { message = "Category not found" });
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, category.RestaurantId, _context);
+            if (authError != null) return authError;
 
             category.Name = dto.Name.Trim();
             category.ImageUrl = dto.ImageUrl;
@@ -134,7 +141,7 @@ namespace DeliveryApp.API.Controllers
         // DELETE api/categories/{id}
         // حذف ناعم للقسم (Soft Delete)
         // ─────────────────────────────────────────────────────────────────
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
@@ -144,6 +151,9 @@ namespace DeliveryApp.API.Controllers
 
             if (category == null || !category.IsActive)
                 return NotFound(new { message = "Category not found" });
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, category.RestaurantId, _context);
+            if (authError != null) return authError;
 
             // حذف ناعم للقسم وكل منتجاته
             category.IsActive = false;
