@@ -48,6 +48,10 @@ public partial class ApplicationDbContext : DbContext
     public virtual DbSet<Deal> Deals { get; set; }
     public virtual DbSet<UserCoupon> UserCoupons { get; set; }
 
+    public virtual DbSet<PrescriptionRequest> PrescriptionRequests { get; set; }
+
+    public virtual DbSet<PrescriptionMessage> PrescriptionMessages { get; set; }
+
     // ✅ الجديد: جدول أكواد الـ OTP (تسجيل / نسيت كلمة المرور)
     public virtual DbSet<OtpCode> OtpCodes { get; set; }
 

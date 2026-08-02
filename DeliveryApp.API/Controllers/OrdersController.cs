@@ -49,6 +49,21 @@ namespace DeliveryApp.API.Controllers
                 !restaurant.StoreType.Equals("Pharmacy", StringComparison.OrdinalIgnoreCase))
                 return BadRequest(new { message = "Prescription orders are only for pharmacies" });
 
+            // ✅ لو الأوردر جاي من طلب روشتة اتفق فيه الطرفين على السعر عبر الشات
+            PrescriptionRequest? prescriptionRequest = null;
+            if (dto.PrescriptionRequestId.HasValue)
+            {
+                prescriptionRequest = await _context.PrescriptionRequests
+                    .FirstOrDefaultAsync(r => r.Id == dto.PrescriptionRequestId.Value && r.CustomerId == userId);
+
+                if (prescriptionRequest == null)
+                    return BadRequest(new { message = "طلب الروشتة غير موجود" });
+                if (prescriptionRequest.Status != "Confirmed" || prescriptionRequest.AgreedPrice is null)
+                    return BadRequest(new { message = "لسه محصلش اتفاق على سعر الروشتة دي" });
+                if (prescriptionRequest.RestaurantId != dto.RestaurantId)
+                    return BadRequest(new { message = "طلب الروشتة ده مش لنفس الصيدلية" });
+            }
+
             var productIds = dto.Items.Select(i => i.ProductId).ToList();
             var products = productIds.Count == 0
                 ? new Dictionary<int, Product>()
@@ -105,7 +120,7 @@ namespace DeliveryApp.API.Controllers
                 dto.DeliveryLatitude, dto.DeliveryLongitude);
             var deliveryFee = DeliveryFeeCalculator.Calculate(restaurant.DeliveryFee, distanceKm, freeRadiusKm, extraFeePerKm);
 
-            var subTotal = orderItems.Sum(i => i.UnitPrice * i.Quantity);
+            var subTotal = prescriptionRequest?.AgreedPrice ?? orderItems.Sum(i => i.UnitPrice * i.Quantity);
             var total = subTotal + deliveryFee;
             decimal discount = 0;
 
@@ -179,6 +194,7 @@ namespace DeliveryApp.API.Controllers
                     ? $"[روشتة] {dto.PrescriptionNotes ?? ""}".Trim()
                     : dto.DeliveryNotes,
                 PrescriptionImageUrl = dto.PrescriptionImageUrl,
+                PrescriptionRequestId = prescriptionRequest?.Id,
                 PaymentMethod = dto.PaymentMethod,
                 PaymentStatus = "Pending",
                 CreatedAt = DateTime.UtcNow,
@@ -197,6 +213,14 @@ namespace DeliveryApp.API.Controllers
             });
 
             await _context.SaveChangesAsync();
+
+            // ✅ الطلب اتحول لأوردر فعلي — نقفل طلب الروشتة عشان محدش يعدل السعر تاني
+            if (prescriptionRequest != null)
+            {
+                prescriptionRequest.Status = "Ordered";
+                prescriptionRequest.OrderId = order.Id;
+                await _context.SaveChangesAsync();
+            }
 
             var customerLang = await GetUserLanguageAsync(userId);
             var placedNotif = NotificationLocalizer.OrderPlaced(customerLang, restaurant.Name, restaurant.StoreType);
@@ -879,6 +903,8 @@ namespace DeliveryApp.API.Controllers
         public string? DeliveryNotes { get; set; }
         public string? PrescriptionImageUrl { get; set; }
         public string? PrescriptionNotes { get; set; }
+        // ✅ لو الأوردر ده جاي بعد ما اتفق العميل وصاحب الصيدلية على سعر عبر الشات
+        public int? PrescriptionRequestId { get; set; }
         public string PaymentMethod { get; set; } = "Cash";
         public string? CouponCode { get; set; }
         public int? CouponId { get; set; }

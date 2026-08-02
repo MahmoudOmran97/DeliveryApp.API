@@ -323,6 +323,90 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] Coupons table check failed: {ex.Message}"); }
 
+    // ── Coupons.OwnerUserId — يقصر الكوبون الناتج عن استبدال النقاط على صاحبه بس ──
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'Coupons' AND COLUMN_NAME = 'OwnerUserId'
+            )
+            BEGIN
+                ALTER TABLE [dbo].[Coupons] ADD [OwnerUserId] INT NULL;
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Coupons_OwnerUser'
+                )
+                ALTER TABLE [dbo].[Coupons] ADD CONSTRAINT [FK_Coupons_OwnerUser]
+                    FOREIGN KEY ([OwnerUserId]) REFERENCES [Users]([Id]);
+            END
+        ");
+        Console.WriteLine("[Startup] Coupons.OwnerUserId ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Coupons.OwnerUserId check failed: {ex.Message}"); }
+
+    // ── Create PrescriptionRequests + PrescriptionMessages tables ──────────────
+    // شات ما قبل الأوردر بين العميل وصاحب الصيدلية عشان يتفقوا على تمن الروشتة
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'PrescriptionRequests')
+            BEGIN
+                CREATE TABLE [dbo].[PrescriptionRequests] (
+                    [Id]             INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [CustomerId]     INT            NOT NULL,
+                    [RestaurantId]   INT            NOT NULL,
+                    [ImageUrl]       NVARCHAR(500)  NOT NULL,
+                    [Notes]          NVARCHAR(1000) NULL,
+                    [Status]         NVARCHAR(20)   NOT NULL DEFAULT 'Pending',
+                    [AgreedPrice]    DECIMAL(10,2)  NULL,
+                    [OrderId]        INT            NULL,
+                    [CreatedAt]      DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+                    [PricedAt]       DATETIME2      NULL,
+                    [ConfirmedAt]    DATETIME2      NULL,
+                    CONSTRAINT [FK_PrescriptionRequests_Customer]
+                        FOREIGN KEY ([CustomerId]) REFERENCES [Users]([Id]),
+                    CONSTRAINT [FK_PrescriptionRequests_Restaurant]
+                        FOREIGN KEY ([RestaurantId]) REFERENCES [Restaurants]([Id])
+                );
+                CREATE INDEX [IX_PrescriptionRequests_CustomerId] ON [dbo].[PrescriptionRequests]([CustomerId]);
+                CREATE INDEX [IX_PrescriptionRequests_RestaurantId] ON [dbo].[PrescriptionRequests]([RestaurantId]);
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'PrescriptionMessages')
+            BEGIN
+                CREATE TABLE [dbo].[PrescriptionMessages] (
+                    [Id]                     INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [PrescriptionRequestId]  INT            NOT NULL,
+                    [SenderId]               INT            NOT NULL,
+                    [SenderRole]             NVARCHAR(20)   NOT NULL DEFAULT 'Customer',
+                    [Message]                NVARCHAR(1000) NOT NULL,
+                    [CreatedAt]              DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+                    CONSTRAINT [FK_PrescriptionMessages_Request]
+                        FOREIGN KEY ([PrescriptionRequestId]) REFERENCES [PrescriptionRequests]([Id]) ON DELETE CASCADE
+                );
+                CREATE INDEX [IX_PrescriptionMessages_RequestId] ON [dbo].[PrescriptionMessages]([PrescriptionRequestId]);
+            END
+        ");
+        Console.WriteLine("[Startup] PrescriptionRequests/Messages tables ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] PrescriptionRequests tables check failed: {ex.Message}"); }
+
+    // ── Orders.PrescriptionRequestId — ربط الأوردر بطلب الروشتة اللي جه منه ───
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (
+                SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'Orders' AND COLUMN_NAME = 'PrescriptionRequestId'
+            )
+            BEGIN
+                ALTER TABLE [dbo].[Orders] ADD [PrescriptionRequestId] INT NULL;
+            END
+        ");
+        Console.WriteLine("[Startup] Orders.PrescriptionRequestId ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Orders.PrescriptionRequestId check failed: {ex.Message}"); }
+
     // ── Create Deals table ────────────────────────────────────────────────────
     try
     {

@@ -67,6 +67,7 @@ public class PointsService : IPointsService
             DiscountValue = discount,
             MinOrderAmount = discount,
             IsActive = true,
+            OwnerUserId = userId, // ✅ الكوبون ده خاص بالمستخدم اللي استبدل نقاطه، مش عام لكل الكستمر
             ExpiresAt = DateTime.UtcNow.AddDays(30),
             CreatedAt = DateTime.UtcNow
         };

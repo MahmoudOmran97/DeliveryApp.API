@@ -69,6 +69,9 @@ public partial class Order
     [StringLength(500)]
     public string? PrescriptionImageUrl { get; set; }
 
+    // ✅ لو الأوردر ده جاي من طلب روشتة اتفق فيه العميل وصاحب الصيدلية على السعر
+    public int? PrescriptionRequestId { get; set; }
+
     public int PointsEarned { get; set; }
 
     [ForeignKey("CustomerId")]

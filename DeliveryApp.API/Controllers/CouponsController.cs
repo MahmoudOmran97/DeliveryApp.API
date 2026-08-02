@@ -14,14 +14,15 @@ public class CouponsController : ControllerBase
 
     public CouponsController(ApplicationDbContext db) => _db = db;
 
-    // GET api/coupons  — returns all active coupons (for rewards/coupons screen)
+    // GET api/coupons  — returns all active PUBLIC coupons (for rewards/coupons screen)
     [HttpGet]
     [AllowAnonymous]
     public async Task<IActionResult> GetAll()
     {
         var now = DateTime.UtcNow;
         var coupons = await _db.Coupons
-            .Where(c => c.IsActive && (c.ExpiresAt == null || c.ExpiresAt >= now))
+            // ✅ الكوبونات الخاصة (اللي ليها OwnerUserId) متظهرش في القائمة العامة لكل الكستمر
+            .Where(c => c.IsActive && c.OwnerUserId == null && (c.ExpiresAt == null || c.ExpiresAt >= now))
             .OrderByDescending(c => c.DiscountValue)
             .Select(c => new
             {
@@ -61,6 +62,10 @@ public class CouponsController : ControllerBase
 
         if (coupon == null)
             return BadRequest(new { message = "كود الخصم غير صحيح أو غير مفعل" });
+
+        // ✅ الكوبون الخاص (ناتج عن استبدال نقاط) مينفعش يستخدمه غير صاحبه
+        if (coupon.OwnerUserId.HasValue && coupon.OwnerUserId.Value != userId)
+            return BadRequest(new { message = "هذا الكوبون غير متاح لحسابك" });
 
         if (coupon.ExpiresAt.HasValue && coupon.ExpiresAt < now)
             return BadRequest(new { message = "عذراً، هذا الكوبون انتهت صلاحيته" });
@@ -106,7 +111,10 @@ public class CouponsController : ControllerBase
         var userId = int.Parse(userIdClaim?.Value!);
         
         var now = DateTime.UtcNow;
-        var allCoupons = await _db.Coupons.Where(c => c.IsActive).ToListAsync();
+        var allCoupons = await _db.Coupons
+            // ✅ يشوف الكوبونات العامة + كوبوناته الخاصة بس، مش كل حد كوبوناته الخاصة
+            .Where(c => c.IsActive && (c.OwnerUserId == null || c.OwnerUserId == userId))
+            .ToListAsync();
         var usedCouponIds = await _db.UserCoupons.Where(uc => uc.UserId == userId).Select(uc => uc.CouponId).ToListAsync();
 
         var result = allCoupons.Select(c => new
@@ -148,9 +156,8 @@ public class CouponsController : ControllerBase
                 c.MaxDiscount,
                 c.RestaurantId,
                 RestaurantName = c.Restaurant != null ? c.Restaurant.Name : null,
+                c.OwnerUserId,
                 c.UsageLimit,
-                c.UsedCount,
-                c.IsActive,
                 c.ExpiresAt,
                 c.CreatedAt,
                 IsExpired = c.ExpiresAt.HasValue && c.ExpiresAt < now
