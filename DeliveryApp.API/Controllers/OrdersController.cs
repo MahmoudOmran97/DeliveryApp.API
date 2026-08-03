@@ -606,6 +606,17 @@ namespace DeliveryApp.API.Controllers
                     Restaurant = new { o.Restaurant.Id, o.Restaurant.Name, o.Restaurant.ImageUrl, o.Restaurant.Phone },
                     CustomerName = o.Customer.FullName,
                     // CustomerPhone = o.Customer.Phone, // Hidden as per requirement
+                    Driver = o.Driver == null ? null : new
+                    {
+                        o.Driver.Id,
+                        Name = o.Driver.User.FullName,
+                        Phone = o.Driver.User.Phone,
+                        o.Driver.Rating,
+                        o.Driver.IsOnline,
+                        o.Driver.VehicleType,
+                        o.Driver.CurrentLatitude,
+                        o.Driver.CurrentLongitude
+                    },
                     Items = o.OrderItems.Select(i => new
                     {
                         i.Id,

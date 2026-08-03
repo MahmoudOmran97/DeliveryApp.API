@@ -1,4 +1,5 @@
-﻿using DeliveryApp.API.Models;
+﻿using DeliveryApp.API.Authorization;
+using DeliveryApp.API.Models;
 using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -107,6 +108,51 @@ namespace DeliveryApp.API.Controllers
                 .ToListAsync();
 
             return Ok(new { total, page, pageSize, data = ratings });
+        }
+
+        // GET api/ratings/restaurant/{restaurantId}  — تقييمات محل معين (بورتال صاحب المحل)
+        [Authorize(Roles = "Restaurant,Admin")]
+        [HttpGet("restaurant/{restaurantId}")]
+        public async Task<IActionResult> GetByRestaurant(
+            int restaurantId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, restaurantId, _context);
+            if (authError != null) return authError;
+
+            var query = _context.Ratings.Where(r => r.RestaurantId == restaurantId);
+
+            var total = await query.CountAsync();
+            var avgRestaurant = total == 0 ? 0 : await query.AverageAsync(r => r.RestaurantRating);
+            var avgFood = await query.Where(r => r.FoodRating != null).Select(r => (double?)r.FoodRating).AverageAsync() ?? 0;
+
+            var ratings = await query
+                .OrderByDescending(r => r.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(r => new
+                {
+                    r.Id,
+                    CustomerName = r.Customer.FullName,
+                    DriverName = r.Driver != null ? r.Driver.User.FullName : null,
+                    r.RestaurantRating,
+                    r.FoodRating,
+                    DriverRating = r.DriverRating.HasValue ? (double?)r.DriverRating.Value : null,
+                    r.Comment,
+                    r.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                total,
+                page,
+                pageSize,
+                avgRestaurant = Math.Round(avgRestaurant, 1),
+                avgFood = Math.Round(avgFood, 1),
+                data = ratings
+            });
         }
 
         // GET api/ratings/driver/{driverId}  — تقييمات الطيار

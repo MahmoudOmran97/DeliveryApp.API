@@ -1,4 +1,5 @@
-﻿using DeliveryApp.API.Models;
+﻿using DeliveryApp.API.Authorization;
+using DeliveryApp.API.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -248,6 +249,81 @@ namespace DeliveryApp.API.Controllers
 
             if (order == null) return Ok(new { message = "No active order" });
             return Ok(order);
+        }
+
+        // ─────────────────────────────────────────────
+        // GET api/drivers/restaurant/{restaurantId}  — السواقين المتصلين بمحل معين
+        // بيرجع أي سواق ليه طلب (حالي أو قديم) مع المحل ده: هو دلوقتي شغال
+        // على طلب من طلبات المحل، أو وصّل له طلبات قبل كده.
+        // خاص ببورتال صاحب المحل (MyStore).
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Restaurant,Admin")]
+        [HttpGet("restaurant/{restaurantId}")]
+        public async Task<IActionResult> GetByRestaurant(int restaurantId)
+        {
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, restaurantId, _context);
+            if (authError != null) return authError;
+
+            var activeStatuses = new[] { "Accepted", "Preparing", "ReadyForPickup", "OnTheWay" };
+
+            // كل الطلبات اللي اتحطلها سواق من طلبات المحل ده (نشطة + قديمة)
+            var driverOrders = await _context.Orders
+                .Where(o => o.RestaurantId == restaurantId && o.DriverId != null)
+                .Select(o => new { o.DriverId, o.Status, o.Id, o.CreatedAt })
+                .ToListAsync();
+
+            var driverIds = driverOrders.Select(o => o.DriverId!.Value).Distinct().ToList();
+
+            var drivers = await _context.Drivers
+                .Where(d => driverIds.Contains(d.Id))
+                .Select(d => new
+                {
+                    d.Id,
+                    UserName = d.User.FullName,
+                    FullName = d.User.FullName,
+                    Phone = d.User.Phone,
+                    d.VehicleType,
+                    d.LicensePlate,
+                    d.Rating,
+                    d.TotalDeliveries,
+                    d.IsOnline,
+                    d.IsAvailable,
+                    d.CurrentLatitude,
+                    d.CurrentLongitude
+                })
+                .ToListAsync();
+
+            var result = drivers.Select(d =>
+            {
+                var myOrders = driverOrders.Where(o => o.DriverId == d.Id).ToList();
+                var activeOrder = myOrders
+                    .Where(o => activeStatuses.Contains(o.Status))
+                    .OrderByDescending(o => o.CreatedAt)
+                    .FirstOrDefault();
+                return new
+                {
+                    d.Id,
+                    d.UserName,
+                    d.FullName,
+                    d.Phone,
+                    d.VehicleType,
+                    d.LicensePlate,
+                    d.Rating,
+                    d.TotalDeliveries,
+                    d.IsOnline,
+                    d.IsAvailable,
+                    d.CurrentLatitude,
+                    d.CurrentLongitude,
+                    DeliveriesForThisStore = myOrders.Count(o => o.Status == "Delivered"),
+                    CurrentOrderId = activeOrder?.Id,
+                    CurrentOrderStatus = activeOrder?.Status
+                };
+            })
+            .OrderByDescending(d => d.CurrentOrderId != null) // اللي شغال على طلب حالي يظهر الأول
+            .ThenByDescending(d => d.IsOnline)
+            .ToList();
+
+            return Ok(new { total = result.Count, data = result });
         }
 
         // ─────────────────────────────────────────────
