@@ -17,13 +17,15 @@ namespace DeliveryApp.API.Controllers
         private readonly IHubService _hubService;
         private readonly IFcmService _fcm;
         private readonly IPointsService _points;
+        private readonly INotificationDispatcher _dispatcher;
 
-        public OrdersController(ApplicationDbContext context, IHubService hubService, IFcmService fcm, IPointsService points)
+        public OrdersController(ApplicationDbContext context, IHubService hubService, IFcmService fcm, IPointsService points, INotificationDispatcher dispatcher)
         {
             _context = context;
             _hubService = hubService;
             _fcm = fcm;
             _points = points;
+            _dispatcher = dispatcher;
         }
 
         private int GetUserId() =>
@@ -263,6 +265,13 @@ namespace DeliveryApp.API.Controllers
                     new Dictionary<string, string> { ["type"] = "NewOrder", ["orderId"] = order.Id.ToString() },
                     _context);
             }
+
+            // 🔔 تنبيه الأدمن على أي طلب جديد على المنصة (جرس الأدمن بورتال)
+            await _dispatcher.NotifyAdminsAsync(
+                "طلب جديد على المنصة",
+                $"طلب #{order.Id} من {restaurant.Name} بقيمة {order.TotalAmount:0.##} ج.م",
+                "NewOrder",
+                order.Id);
 
             return CreatedAtAction(nameof(GetById), new { id = order.Id }, new
             {

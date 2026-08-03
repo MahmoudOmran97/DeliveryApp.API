@@ -198,14 +198,12 @@ namespace DeliveryApp.API.Controllers
     public class NotificationsController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
-        private readonly IHubService _hubService;
-        private readonly IFcmService _fcm;
+        private readonly INotificationDispatcher _dispatcher;
 
-        public NotificationsController(ApplicationDbContext context, IHubService hubService, IFcmService fcm)
+        public NotificationsController(ApplicationDbContext context, INotificationDispatcher dispatcher)
         {
             _context = context;
-            _hubService = hubService;
-            _fcm = fcm;
+            _dispatcher = dispatcher;
         }
 
         private int GetUserId() =>
@@ -249,6 +247,46 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { total, unread, page, pageSize, data = notifications });
         }
 
+        // GET api/notifications/unread-count — للعداد فوق زر الجرس (بولينج خفيف)
+        [HttpGet("unread-count")]
+        public async Task<IActionResult> UnreadCount()
+        {
+            var userId = GetUserId();
+            var count = await _context.Notifications.CountAsync(n => n.UserId == userId && !n.IsRead);
+            return Ok(new { count });
+        }
+
+        // POST api/notifications/{id}/read
+        [HttpPost("{id}/read")]
+        public async Task<IActionResult> MarkRead(int id)
+        {
+            var userId = GetUserId();
+            var notif = await _context.Notifications.FirstOrDefaultAsync(n => n.Id == id && n.UserId == userId);
+            if (notif == null) return NotFound(new { message = "Notification not found" });
+
+            if (!notif.IsRead)
+            {
+                notif.IsRead = true;
+                await _context.SaveChangesAsync();
+            }
+            return Ok(new { notif.Id, notif.IsRead });
+        }
+
+        // POST api/notifications/read-all
+        [HttpPost("read-all")]
+        public async Task<IActionResult> MarkAllRead()
+        {
+            var userId = GetUserId();
+            var unreadItems = await _context.Notifications
+                .Where(n => n.UserId == userId && !n.IsRead)
+                .ToListAsync();
+
+            foreach (var n in unreadItems) n.IsRead = true;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { count = unreadItems.Count });
+        }
+
         // POST api/notifications/send  [Admin]
         [Authorize(Roles = "Admin")]
         [HttpPost("send")]
@@ -280,41 +318,17 @@ namespace DeliveryApp.API.Controllers
                 return BadRequest(new { message = "No recipients found" });
 
             var type = string.IsNullOrWhiteSpace(dto.Type) ? "General" : dto.Type;
-            var now = DateTime.UtcNow;
             var sent = 0;
 
             foreach (var user in targets)
             {
-                _context.Notifications.Add(new Notification
-                {
-                    UserId = user.Id,
-                    Title = dto.Title,
-                    Body = dto.Body,
-                    Type = type,
-                    OrderId = dto.OrderId,
-                    IsRead = false,
-                    CreatedAt = now
-                });
-
-                await _hubService.NotifyUserDirectly(user.Id, "NotificationReceived", new
-                {
-                    dto.Title,
-                    dto.Body,
-                    Type = type,
-                    dto.OrderId
-                });
-
-                await _fcm.SendToUserAsync(user.Id, dto.Title, dto.Body,
-                    new Dictionary<string, string>
-                    {
-                        ["type"] = type,
-                        ["orderId"] = dto.OrderId?.ToString() ?? ""
-                    });
-
+                // الدوسباتشر بيحفظ الصف ويبعت "NewNotification" لحظي عن طريق
+                // الـ Hub + FCM — نفس الحدث اللي بيتبعت لما أوردر جديد يحصل،
+                // عشان جرس الأدمن/صاحب المحل يستمع لحدث واحد بس
+                await _dispatcher.NotifyUserAsync(user.Id, dto.Title, dto.Body, type, dto.OrderId);
                 sent++;
             }
 
-            await _context.SaveChangesAsync();
             return Ok(new { message = $"Notification sent to {sent} user(s)", count = sent });
         }
 

@@ -22,12 +22,14 @@ public class PrescriptionRequestsController : ControllerBase
     private readonly ApplicationDbContext _context;
     private readonly IHubService _hubService;
     private readonly IFcmService _fcm;
+    private readonly INotificationDispatcher _dispatcher;
 
-    public PrescriptionRequestsController(ApplicationDbContext context, IHubService hubService, IFcmService fcm)
+    public PrescriptionRequestsController(ApplicationDbContext context, IHubService hubService, IFcmService fcm, INotificationDispatcher dispatcher)
     {
         _context = context;
         _hubService = hubService;
         _fcm = fcm;
+        _dispatcher = dispatcher;
     }
 
     private int GetUserId() => RestaurantOwnerAuth.GetUserId(User) ?? 0;
@@ -60,14 +62,23 @@ public class PrescriptionRequestsController : ControllerBase
         await _context.SaveChangesAsync();
 
         // إشعار لصاحب الصيدلية إن فيه روشتة جديدة محتاجة تسعير
+        // (قبل كده كان بس توست لحظي يختفي — دلوقتي بيتحفظ في جرس التنبيهات كمان)
         if (restaurant.OwnerUserId.HasValue)
         {
+            await _dispatcher.NotifyUserAsync(restaurant.OwnerUserId.Value,
+                "روشتة جديدة 💊", $"عميل رفع روشتة جديدة لمحل {restaurant.Name} وبينتظر التسعير",
+                "PrescriptionRequest");
+
+            // نفس الحدث القديم المخصص لسه بيتبعت عشان التوست/الصوت بتاع صفحة الصيدلية يفضل شغال
             await _hubService.NotifyUserDirectly(restaurant.OwnerUserId.Value, "PrescriptionRequestReceived",
                 new { request.Id, restaurant.Name });
-            await _fcm.SendToUserAsync(restaurant.OwnerUserId.Value,
-                "روشتة جديدة 💊", "عميل رفع روشتة جديدة وبينتظر التسعير",
-                new Dictionary<string, string> { ["type"] = "PrescriptionRequest", ["prescriptionRequestId"] = request.Id.ToString() });
         }
+
+        // 🔔 تنبيه الأدمن إن عميل بدأ شات روشتة جديد
+        await _dispatcher.NotifyAdminsAsync(
+            "طلب روشتة جديد 💊",
+            $"عميل بدأ شات روشتة مع {restaurant.Name}",
+            "PrescriptionRequest");
 
         return Ok(new { request.Id, request.Status });
     }

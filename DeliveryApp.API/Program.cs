@@ -15,6 +15,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IHubService, HubService>();
+builder.Services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
 builder.Services.AddHttpClient("fcm");
 builder.Services.AddScoped<IFcmService, FcmService>();
 builder.Services.AddScoped<IPointsService, PointsService>();
