@@ -372,6 +372,7 @@ namespace DeliveryApp.API.Controllers
         [HttpGet("admin")]
         public async Task<IActionResult> GetAllAdmin(
             [FromQuery] string? status,
+            [FromQuery] string? search,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
@@ -379,6 +380,17 @@ namespace DeliveryApp.API.Controllers
 
             if (!string.IsNullOrWhiteSpace(status))
                 query = query.Where(o => o.Status == status);
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim();
+                query = int.TryParse(term, out var orderId)
+                    ? query.Where(o => o.Id == orderId
+                        || o.Customer.FullName.Contains(term)
+                        || o.Restaurant.Name.Contains(term))
+                    : query.Where(o => o.Customer.FullName.Contains(term)
+                        || o.Restaurant.Name.Contains(term));
+            }
 
             var total = await query.CountAsync();
             var orders = await query

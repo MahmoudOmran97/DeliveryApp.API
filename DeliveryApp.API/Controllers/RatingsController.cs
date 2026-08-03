@@ -85,11 +85,22 @@ namespace DeliveryApp.API.Controllers
         [Authorize(Roles = "Admin")]
         [HttpGet("admin")]
         public async Task<IActionResult> GetAllAdmin(
+            [FromQuery] string? search,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
-            var total = await _context.Ratings.CountAsync();
-            var ratings = await _context.Ratings
+            var query = _context.Ratings.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim();
+                query = query.Where(r => r.Customer.FullName.Contains(term)
+                    || r.Restaurant.Name.Contains(term)
+                    || (r.Driver != null && r.Driver.User.FullName.Contains(term)));
+            }
+
+            var total = await query.CountAsync();
+            var ratings = await query
                 .OrderByDescending(r => r.CreatedAt)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)

@@ -129,6 +129,7 @@ namespace DeliveryApp.API.Controllers
         public async Task<IActionResult> GetAllAdmin(
             [FromQuery] DateTime? from,
             [FromQuery] DateTime? to,
+            [FromQuery] string? search,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
@@ -141,6 +142,17 @@ namespace DeliveryApp.API.Controllers
             {
                 var toEnd = to.Value.Date.AddDays(1).AddTicks(-1);
                 query = query.Where(p => (p.PaidAt ?? p.CreatedAt) <= toEnd);
+            }
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim();
+                query = int.TryParse(term, out var orderId)
+                    ? query.Where(p => p.OrderId == orderId
+                        || p.Order.Restaurant.Name.Contains(term)
+                        || (p.TransactionId != null && p.TransactionId.Contains(term)))
+                    : query.Where(p => p.Order.Restaurant.Name.Contains(term)
+                        || (p.TransactionId != null && p.TransactionId.Contains(term)));
             }
 
             var total = await query.CountAsync();

@@ -57,6 +57,7 @@ namespace DeliveryApp.API.Controllers
         [HttpGet("all")]
         public async Task<IActionResult> GetAllUsers(
             [FromQuery] string? role,
+            [FromQuery] string? search,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
@@ -64,6 +65,14 @@ namespace DeliveryApp.API.Controllers
 
             if (!string.IsNullOrWhiteSpace(role))
                 query = query.Where(u => u.Role == role);
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim();
+                query = query.Where(u => u.FullName.Contains(term)
+                    || u.Email.Contains(term)
+                    || (u.Phone != null && u.Phone.Contains(term)));
+            }
 
             var total = await query.CountAsync();
             var users = await query
