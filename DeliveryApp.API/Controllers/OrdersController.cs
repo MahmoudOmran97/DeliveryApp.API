@@ -636,9 +636,11 @@ namespace DeliveryApp.API.Controllers
 
         // ─────────────────────────────────────────────
         // PUT api/orders/{id}/restaurant-status
-        // تحديث حالة الأوردر من برنامج المطعم (بدون تسجيل دخول)
+        // تحديث حالة الأوردر من برنامج المطعم/الصيدلية (لازم تسجيل دخول + إثبات ملكية المحل)
+        // ملحوظة أمان: كان [AllowAnonymous] وبدون أي تحقق من ملكية الأوردر —
+        // أي حد كان يقدر يغيّر حالة أي أوردر في المنصة. اتصلح هنا.
         // ─────────────────────────────────────────────
-        [AllowAnonymous]
+        [Authorize(Roles = "Restaurant,Admin")]
         [HttpPut("{id}/restaurant-status")]
         public async Task<IActionResult> UpdateRestaurantStatus(int id, [FromBody] UpdateStatusDto dto)
         {
@@ -648,7 +650,15 @@ namespace DeliveryApp.API.Controllers
                 .FirstOrDefaultAsync(o => o.Id == id);
             if (order == null) return NotFound();
 
-            // المطعم فقط يقدر يغير: Pending → Accepted/Rejected, Accepted → Preparing, Preparing → ReadyForPickup
+            // لو صاحب محل (مش أدمن) لازم يتأكد إن الأوردر ده تابع لمحله هو بالظبط
+            if (User.IsInRole("Restaurant") && !User.IsInRole("Admin"))
+            {
+                var userId = GetUserId();
+                if (order.Restaurant?.OwnerUserId != userId)
+                    return Forbid();
+            }
+
+            // المطعم/الصيدلية فقط يقدر يغير: Pending → Accepted/Rejected, Accepted → Preparing, Preparing → ReadyForPickup
             var restaurantTransitions = new Dictionary<string, string[]>
             {
                 ["Pending"] = new[] { "Accepted", "Rejected" },
