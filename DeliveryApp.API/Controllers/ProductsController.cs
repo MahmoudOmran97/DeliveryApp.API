@@ -13,6 +13,43 @@ namespace DeliveryApp.API.Controllers
         private readonly ApplicationDbContext _context;
         public ProductsController(ApplicationDbContext context) => _context = context;
 
+        // GET api/products/mystore?categoryId=5  — منتجات قسم معين لصاحب المحل نفسه (بيشمل المنتجات المتاحة وغير المتاحة)
+        [Authorize(Roles = "Restaurant,Admin")]
+        [HttpGet("mystore")]
+        public async Task<IActionResult> GetMyStoreProducts([FromQuery] int categoryId)
+        {
+            var category = await _context.Categories.FindAsync(categoryId);
+            if (category == null || !category.IsActive) return NotFound(new { message = "Category not found" });
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, category.RestaurantId, _context);
+            if (authError != null) return authError;
+
+            var products = await _context.Products
+                .Where(p => p.CategoryId == categoryId && p.IsActive)
+                .OrderByDescending(p => p.CreatedAt)
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    p.Description,
+                    p.Price,
+                    p.DiscountedPrice,
+                    p.ImageUrl,
+                    p.PreparationTime,
+                    p.Calories,
+                    p.IsAvailable,
+                    Category = new { p.Category.Id, p.Category.Name },
+                    CategoryName = p.Category.Name,
+                    RestaurantId = p.Category.RestaurantId,
+                    RestaurantName = p.Category.Restaurant.Name,
+                    Variants = p.Variants.Where(v => v.IsActive).OrderBy(v => v.SortOrder)
+                        .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder }).ToList()
+                })
+                .ToListAsync();
+
+            return Ok(products);
+        }
+
         // GET api/products/admin  — كل المنتجات (لوحة صاحب المنصة)
         [Authorize(Roles = "Admin")]
         [HttpGet("admin")]

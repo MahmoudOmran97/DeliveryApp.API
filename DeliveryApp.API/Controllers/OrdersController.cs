@@ -422,7 +422,8 @@ namespace DeliveryApp.API.Controllers
             var order = await _context.Orders
                 .Where(o => o.Id == id &&
                     (role == "Admin" || o.CustomerId == userId ||
-                     (role == "Driver" && o.Driver!.UserId == userId)))
+                     (role == "Driver" && o.Driver!.UserId == userId) ||
+                     (role == "Restaurant" && o.Restaurant.OwnerUserId == userId)))
                 .Select(o => new
                 {
                     o.Id,
