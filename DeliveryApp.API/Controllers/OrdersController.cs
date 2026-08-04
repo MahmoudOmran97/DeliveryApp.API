@@ -249,21 +249,13 @@ namespace DeliveryApp.API.Controllers
                 var ownerLang = await GetUserLanguageAsync(restaurant.OwnerUserId.Value);
                 var ownerNotif = NotificationLocalizer.NewOrderForOwner(ownerLang, order.Id);
 
-                _context.Notifications.Add(new Notification
-                {
-                    UserId = restaurant.OwnerUserId.Value,
-                    Title = ownerNotif.Title,
-                    Body = ownerNotif.Body,
-                    Type = "NewOrder",
-                    OrderId = order.Id,
-                    CreatedAt = DateTime.UtcNow
-                });
-                await _context.SaveChangesAsync();
+                // الدوسباتشر بيحفظ التنبيه + يبعت "NewNotification" لحظي (تسمعه القائمة/الجرس)
+                // + FCM في نداء واحد بدل التكرار اليدوي اللي كان هنا قبل كده
+                await _dispatcher.NotifyUserAsync(restaurant.OwnerUserId.Value, ownerNotif.Title, ownerNotif.Body, "NewOrder", order.Id);
 
+                // نفس الحدث الخام القديم "NewOrder" (orderId مباشر) لسه بيتبعت كمان
+                // عشان أي مستمع تاني قديم يفضل شغال زي ما هو
                 await _hubService.NotifyUserDirectly(restaurant.OwnerUserId.Value, "NewOrder", order.Id);
-                await _fcm.SendToUserAsync(restaurant.OwnerUserId.Value, ownerNotif.Title, ownerNotif.Body,
-                    new Dictionary<string, string> { ["type"] = "NewOrder", ["orderId"] = order.Id.ToString() },
-                    _context);
             }
 
             // 🔔 تنبيه الأدمن على أي طلب جديد على المنصة (جرس الأدمن بورتال)
