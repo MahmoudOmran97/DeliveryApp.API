@@ -98,6 +98,22 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { total, page, pageSize, data = users });
         }
 
+        // GET api/user/support-contact — بيرجع رقم واتساب الأدمن عشان صاحب المحل
+        // يقدر يتواصل مع الدعم. متاح لأي مستخدم مسجل دخول (مش بس الأدمن)،
+        // وبيرجع أول أدمن فعّال وعنده رقم فون (الأقدم إنشاءً = الحساب الرئيسي).
+        [HttpGet("support-contact")]
+        public async Task<IActionResult> GetSupportContact()
+        {
+            var admin = await _context.Users
+                .Where(u => u.Role == "Admin" && u.IsActive && u.Phone != null && u.Phone != "")
+                .OrderBy(u => u.CreatedAt)
+                .Select(u => new { u.Phone, u.FullName })
+                .FirstOrDefaultAsync();
+
+            if (admin == null) return NotFound();
+            return Ok(new { phone = admin.Phone, name = admin.FullName });
+        }
+
         // GET api/user/{id}  [Admin]
         [Authorize(Roles = "Admin")]
         [HttpGet("{id:int}")]
