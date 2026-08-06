@@ -114,6 +114,21 @@ namespace DeliveryApp.API.Controllers
             return Ok(new { phone = admin.Phone, name = admin.FullName });
         }
 
+        // GET api/user/support-contacts — بيرجع *كل* الأدمنز الفعّالين (اللي عندهم
+        // رقم فون) عشان صاحب المحل يختار يكلم مين منهم على واتساب. لو الأدمن
+        // عنده صورة بروفايل بترجع كمان عشان تتعرض جمب اسمه في التابة.
+        [HttpGet("support-contacts")]
+        public async Task<IActionResult> GetSupportContacts()
+        {
+            var admins = await _context.Users
+                .Where(u => u.Role == "Admin" && u.IsActive && u.Phone != null && u.Phone != "")
+                .OrderBy(u => u.CreatedAt)
+                .Select(u => new { u.Id, u.Phone, u.FullName, u.ProfileImageUrl })
+                .ToListAsync();
+
+            return Ok(admins);
+        }
+
         // GET api/user/{id}  [Admin]
         [Authorize(Roles = "Admin")]
         [HttpGet("{id:int}")]
