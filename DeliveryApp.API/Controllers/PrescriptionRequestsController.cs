@@ -180,7 +180,7 @@ public class PrescriptionRequestsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(int id)
     {
-        var req = await _context.PrescriptionRequests.Include(r => r.Restaurant).FirstOrDefaultAsync(r => r.Id == id);
+        var req = await _context.PrescriptionRequests.Include(r => r.Restaurant).Include(r => r.Customer).FirstOrDefaultAsync(r => r.Id == id);
         if (req == null) return NotFound();
 
         var authError = await CheckAccessAsync(req);
@@ -190,6 +190,7 @@ public class PrescriptionRequestsController : ControllerBase
         {
             req.Id,
             req.CustomerId,
+            CustomerName = req.Customer?.FullName,
             req.RestaurantId,
             RestaurantName = req.Restaurant?.Name,
             req.ImageUrl,
