@@ -850,16 +850,10 @@ namespace DeliveryApp.API.Controllers
                     _context);
             }
 
-            // If order is delivered, delete chat messages
-            if (dto.Status == "Delivered")
-            {
-                var messages = await _context.ChatMessages.Where(m => m.OrderId == order.Id).ToListAsync();
-                if (messages.Any())
-                {
-                    _context.ChatMessages.RemoveRange(messages);
-                    await _context.SaveChangesAsync();
-                }
-            }
+            // ملحوظة: قبل كده كان بيتم مسح رسايل الشات تلقائي لما الأوردر يتسلم،
+            // لكن ده كان بيمنع الأدمن (ومراجعة النزاعات) من مراجعة الشات بعد التسليم.
+            // الرسايل دلوقتي بتفضل محفوظة مربوطة بالـ OrderId، ومفيش تأثير على
+            // أوردرات تانية لأن كل أوردر له OrderId مختلف فالشات الجديد بيبدأ فاضي.
 
             return Ok(new { message = "Status updated", order.Status });
         }
