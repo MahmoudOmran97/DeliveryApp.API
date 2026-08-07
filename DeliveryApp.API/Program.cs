@@ -588,6 +588,17 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] DeliverySettings table ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] DeliverySettings table check failed: {ex.Message}"); }
+
+    // ── ✅ الجديد: Notifications.ActionUrl — توجيه الإشعار لمكان في التطبيق (زي البانرات) ──
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Notifications' AND COLUMN_NAME = 'ActionUrl')
+                ALTER TABLE [dbo].[Notifications] ADD [ActionUrl] NVARCHAR(300) NULL;
+        ");
+        Console.WriteLine("[Startup] Notifications.ActionUrl column ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Notifications.ActionUrl check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();

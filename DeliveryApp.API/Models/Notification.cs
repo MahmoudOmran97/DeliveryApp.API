@@ -28,6 +28,14 @@ public partial class Notification
 
     public int? OrderId { get; set; }
 
+    // ─────────────────────────────────────────────────────────────────
+    // نفس نظام التوجيه بتاع البانرات (Banners.ActionUrl): "order/5",
+    // "restaurant/12", "chat/5", "category/food", أو رابط خارجي https://...
+    // فاضي = مفيش توجيه، الإشعار معلوماتي بس. الأدمن هو اللي بيحددها من الشاشة.
+    // ─────────────────────────────────────────────────────────────────
+    [StringLength(300)]
+    public string? ActionUrl { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     [ForeignKey("UserId")]

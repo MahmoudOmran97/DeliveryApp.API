@@ -240,6 +240,7 @@ namespace DeliveryApp.API.Controllers
                     n.Type,
                     n.IsRead,
                     n.OrderId,
+                    n.ActionUrl,
                     n.CreatedAt
                 })
                 .ToListAsync();
@@ -325,7 +326,7 @@ namespace DeliveryApp.API.Controllers
                 // الدوسباتشر بيحفظ الصف ويبعت "NewNotification" لحظي عن طريق
                 // الـ Hub + FCM — نفس الحدث اللي بيتبعت لما أوردر جديد يحصل،
                 // عشان جرس الأدمن/صاحب المحل يستمع لحدث واحد بس
-                await _dispatcher.NotifyUserAsync(user.Id, dto.Title, dto.Body, type, dto.OrderId);
+                await _dispatcher.NotifyUserAsync(user.Id, dto.Title, dto.Body, type, dto.OrderId, dto.ActionUrl);
                 sent++;
             }
 
@@ -405,5 +406,10 @@ namespace DeliveryApp.API.Controllers
         public string Body { get; set; } = string.Empty;
         public string? Type { get; set; }
         public int? OrderId { get; set; }
+
+        // نفس نظام التوجيه بتاع البانرات — الأدمن بيحددها من شاشة الإرسال:
+        // "order/5", "restaurant/12", "chat/5", "category/food", أو رابط خارجي.
+        // فاضي = الإشعار من غير توجيه (معلوماتي بس).
+        public string? ActionUrl { get; set; }
     }
 }

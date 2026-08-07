@@ -11,8 +11,8 @@ namespace DeliveryApp.API.Services;
 // ─────────────────────────────────────────────────────────────────────────
 public interface INotificationDispatcher
 {
-    Task<Notification> NotifyUserAsync(int userId, string title, string body, string type, int? orderId = null);
-    Task NotifyAdminsAsync(string title, string body, string type, int? orderId = null);
+    Task<Notification> NotifyUserAsync(int userId, string title, string body, string type, int? orderId = null, string? actionUrl = null);
+    Task NotifyAdminsAsync(string title, string body, string type, int? orderId = null, string? actionUrl = null);
 }
 
 public class NotificationDispatcher : INotificationDispatcher
@@ -28,7 +28,7 @@ public class NotificationDispatcher : INotificationDispatcher
         _fcm = fcm;
     }
 
-    public async Task<Notification> NotifyUserAsync(int userId, string title, string body, string type, int? orderId = null)
+    public async Task<Notification> NotifyUserAsync(int userId, string title, string body, string type, int? orderId = null, string? actionUrl = null)
     {
         var notif = new Notification
         {
@@ -37,6 +37,7 @@ public class NotificationDispatcher : INotificationDispatcher
             Body = body,
             Type = type,
             OrderId = orderId,
+            ActionUrl = string.IsNullOrWhiteSpace(actionUrl) ? null : actionUrl.Trim(),
             CreatedAt = DateTime.UtcNow
         };
         _context.Notifications.Add(notif);
@@ -50,18 +51,23 @@ public class NotificationDispatcher : INotificationDispatcher
             notif.Body,
             notif.Type,
             notif.OrderId,
+            notif.ActionUrl,
             notif.IsRead,
             notif.CreatedAt
         });
 
-        await _fcm.SendToUserAsync(userId, title, body,
-            new Dictionary<string, string> { ["type"] = type, ["orderId"] = orderId?.ToString() ?? "" },
-            _context);
+        // actionUrl بيتبعت جوه data payload الـ FCM عشان تطبيق الكستمر/الدرايفر
+        // يقدر يوجّه المستخدم مكان محدد لما يدوس على الإشعار (نفس نظام البانرات)
+        var data = new Dictionary<string, string> { ["type"] = type, ["orderId"] = orderId?.ToString() ?? "" };
+        if (!string.IsNullOrWhiteSpace(notif.ActionUrl))
+            data["actionUrl"] = notif.ActionUrl;
+
+        await _fcm.SendToUserAsync(userId, title, body, data, _context);
 
         return notif;
     }
 
-    public async Task NotifyAdminsAsync(string title, string body, string type, int? orderId = null)
+    public async Task NotifyAdminsAsync(string title, string body, string type, int? orderId = null, string? actionUrl = null)
     {
         var adminIds = await _context.Users
             .Where(u => u.Role == "Admin" && u.IsActive)
@@ -69,6 +75,6 @@ public class NotificationDispatcher : INotificationDispatcher
             .ToListAsync();
 
         foreach (var adminId in adminIds)
-            await NotifyUserAsync(adminId, title, body, type, orderId);
+            await NotifyUserAsync(adminId, title, body, type, orderId, actionUrl);
     }
 }
