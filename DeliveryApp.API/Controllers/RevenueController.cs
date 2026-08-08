@@ -99,20 +99,27 @@ namespace DeliveryApp.API.Controllers
 
         // POST /api/revenue/settlements/generate
         // بيولد سجلات استحقاق شهرية لكل المحلات والسواقين اللي عندهم خطة نشطة،
-        // بناءً على الطلبات Delivered في الفترة المحددة. لو سجل الفترة دي موجود
-        // بالفعل لمحل/سواق معين، بيتخطاه (منعًا للتكرار).
+        // بناءً على الطلبات Delivered في الفترة المحددة. لو فيه سجل استحقاق لمحل/سواق
+        // معين بيتقاطع (overlap) مع الفترة المطلوبة - حتى لو مش نفس التاريخ بالظبط -
+        // بيتخطاه (منعًا للتكرار اللي كان بيحصل لو الأدمن ولّد بتواريخ مختلفة شوية
+        // لكنها بتقع في نفس الفترة).
         [HttpPost("settlements/generate")]
         public async Task<IActionResult> GenerateSettlements([FromBody] GenerateSettlementsDto dto)
         {
             var periodStart = dto.PeriodStart.Date;
             var periodEnd = dto.PeriodEnd.Date.AddDays(1).AddTicks(-1);
 
+            if (periodStart > periodEnd)
+                return BadRequest(new { message = "تاريخ بداية الفترة لازم يكون قبل تاريخ النهاية" });
+
             var plans = await _context.SubscriptionPlans.Where(p => p.IsActive).ToListAsync();
             if (!plans.Any())
                 return Ok(new { message = "No active subscription plans", generated = 0 });
 
+            // تقاطع فترتين بيتحقق لو بداية الفترة الموجودة قبل أو تساوي نهاية المطلوبة،
+            // ونهايتها بعد أو تساوي بداية المطلوبة - ده بيغطي أي شكل تداخل (جزئي أو كامل)
             var existing = await _context.RevenueSettlements
-                .Where(s => s.PeriodStart == periodStart && s.PeriodEnd == periodEnd)
+                .Where(s => s.PeriodStart <= periodEnd && s.PeriodEnd >= periodStart)
                 .Select(s => new { s.EntityType, s.RestaurantId, s.DriverId })
                 .ToListAsync();
 
@@ -123,6 +130,7 @@ namespace DeliveryApp.API.Controllers
                 .ToListAsync();
 
             var generated = new List<RevenueSettlement>();
+            int skipped = 0;
 
             foreach (var plan in plans)
             {
@@ -130,7 +138,7 @@ namespace DeliveryApp.API.Controllers
                     e.EntityType == plan.EntityType &&
                     e.RestaurantId == plan.RestaurantId &&
                     e.DriverId == plan.DriverId);
-                if (alreadyExists) continue;
+                if (alreadyExists) { skipped++; continue; }
 
                 decimal ordersTotal;
                 int ordersCount;
@@ -156,7 +164,10 @@ namespace DeliveryApp.API.Controllers
                     : Math.Round(ordersTotal * plan.Value / 100m, 2);
 
                 if (plan.Type == SubscriptionType.Percentage && ordersCount == 0)
+                {
+                    skipped++;
                     continue; // مفيش مبيعات = مفيش نسبة تتحصل، مش محتاجين نولد سجل صفر
+                }
 
                 generated.Add(new RevenueSettlement
                 {
@@ -182,7 +193,27 @@ namespace DeliveryApp.API.Controllers
                 await _context.SaveChangesAsync();
             }
 
-            return Ok(new { message = "Settlements generated", generated = generated.Count });
+            // كل الخطط النشطة كانت متخطاة (فترة متقاطعة موجودة بالفعل، أو من غير مبيعات) -
+            // ومفيش أي حاجة جديدة اتولدت. ده بالظبط الحالة اللي لازم الأدمن ياخد عليها تنبيه
+            // واضح إن الفترة دي (أو جزء منها) اتعملها استحقاقات قبل كده.
+            if (!generated.Any() && skipped > 0)
+            {
+                return Conflict(new
+                {
+                    message = "الفترة دي (أو جزء منها) اتعملها استحقاقات قبل كده لكل الخطط النشطة، مينفعش تتولّد تاني لنفس الفترة",
+                    generated = 0,
+                    skipped
+                });
+            }
+
+            return Ok(new
+            {
+                message = skipped > 0
+                    ? $"تم توليد {generated.Count} استحقاق، وتخطي {skipped} (فترة متقاطعة موجودة بالفعل أو من غير مبيعات)"
+                    : "Settlements generated",
+                generated = generated.Count,
+                skipped
+            });
         }
 
         // GET /api/revenue/settlements?entityType=&status=&from=&to=
