@@ -58,6 +58,11 @@ public partial class ApplicationDbContext : DbContext
     // ✅ الجديد: إعدادات سعر التوصيل (قابلة للتعديل من الأدمن)
     public virtual DbSet<DeliverySettings> DeliverySettings { get; set; }
 
+    public virtual DbSet<AiSettings> AiSettings { get; set; }
+    public virtual DbSet<SupportSession> SupportSessions { get; set; }
+    public virtual DbSet<SupportMessage> SupportMessages { get; set; }
+    public virtual DbSet<Complaint> Complaints { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
     }

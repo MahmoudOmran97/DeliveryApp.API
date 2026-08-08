@@ -23,6 +23,7 @@ builder.Services.AddScoped<IPointsService, PointsService>();
 // ✅ الجديد: خدمات الـ OTP (إرسال إيميل + توليد/تحقق الكود)
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IOtpService, OtpService>();
+builder.Services.AddScoped<IAiSupportService, AiSupportService>();
 
 builder.Services.AddCors(options =>
 {
@@ -599,6 +600,101 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] Notifications.ActionUrl column ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] Notifications.ActionUrl check failed: {ex.Message}"); }
+
+    // ── ✅ الجديد: AiSettings + SupportSessions/SupportMessages + Complaints ──
+    // شات الدعم بالـ AI (اللي بيتحكم فيه الأدمن) + جدول الشكاوى.
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'AiSettings')
+            BEGIN
+                CREATE TABLE [dbo].[AiSettings] (
+                    [Id]           INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [IsEnabled]    BIT            NOT NULL DEFAULT 1,
+                    [ApiKey]       NVARCHAR(300)  NULL,
+                    [Model]        NVARCHAR(100)  NOT NULL DEFAULT 'openai/gpt-4o-mini',
+                    [SystemPrompt] NVARCHAR(MAX)  NULL,
+                    [MaxTokens]    INT            NOT NULL DEFAULT 512,
+                    [UpdatedAt]    DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+                );
+                INSERT INTO [dbo].[AiSettings] ([IsEnabled],[Model],[SystemPrompt],[MaxTokens])
+                VALUES (1, 'openai/gpt-4o-mini',
+                    N'أنت مساعد دعم عملاء ودود لتطبيق توصيل طلبات اسمه توصيلة. ساعد العميل في الاستفسارات
+                    عن الطلبات والتتبع والإلغاء والاسترجاع. لو حسيت إن العميل بيشتكي من مشكلة حقيقية
+                    (طلب متأخر جدًا، منتج فاسد أو ناقص، سلوك سيء من مندوب، مبلغ اتخصم غلط... إلخ)
+                    استخدم أداة create_complaint عشان تسجل شكوى رسمية باسمه. ولو الموضوع معقد أو محتاج
+                    قرار بشري أو العميل نفسه طلب يتكلم مع حد حقيقي، استخدم أداة escalate_to_admin.', 512);
+            END
+        ");
+
+        // ✅ لو الجدول كان اتعمل قبل كده بموديل Anthropic القديم (claude-sonnet-...)
+        // نرجّعه لموديل OpenRouter الافتراضي عشان النظام دلوقتي بيكلم OpenRouter مش Anthropic مباشرة
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'AiSettings')
+            BEGIN
+                UPDATE [dbo].[AiSettings]
+                SET [Model] = 'openai/gpt-4o-mini'
+                WHERE [Model] LIKE 'claude-%';
+            END
+        ");
+
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'SupportSessions')
+            BEGIN
+                CREATE TABLE [dbo].[SupportSessions] (
+                    [Id]            INT           IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [CustomerId]    INT           NOT NULL,
+                    [Status]        NVARCHAR(20)  NOT NULL DEFAULT 'AI',
+                    [CreatedAt]     DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+                    [LastMessageAt] DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+                    CONSTRAINT [FK_SupportSessions_Customer]
+                        FOREIGN KEY ([CustomerId]) REFERENCES [Users]([Id])
+                );
+                CREATE INDEX [IX_SupportSessions_CustomerId] ON [dbo].[SupportSessions]([CustomerId]);
+                CREATE INDEX [IX_SupportSessions_Status] ON [dbo].[SupportSessions]([Status]);
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'SupportMessages')
+            BEGIN
+                CREATE TABLE [dbo].[SupportMessages] (
+                    [Id]         INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [SessionId]  INT            NOT NULL,
+                    [SenderRole] NVARCHAR(20)   NOT NULL DEFAULT 'Customer',
+                    [SenderId]   INT            NULL,
+                    [Message]    NVARCHAR(2000) NOT NULL,
+                    [CreatedAt]  DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+                    CONSTRAINT [FK_SupportMessages_Session]
+                        FOREIGN KEY ([SessionId]) REFERENCES [SupportSessions]([Id]) ON DELETE CASCADE
+                );
+                CREATE INDEX [IX_SupportMessages_SessionId] ON [dbo].[SupportMessages]([SessionId]);
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'Complaints')
+            BEGIN
+                CREATE TABLE [dbo].[Complaints] (
+                    [Id]                INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [CustomerId]        INT            NOT NULL,
+                    [OrderId]           INT            NULL,
+                    [SupportSessionId]  INT            NULL,
+                    [Subject]           NVARCHAR(200)  NOT NULL,
+                    [Description]       NVARCHAR(2000) NOT NULL,
+                    [Status]            NVARCHAR(20)   NOT NULL DEFAULT 'Open',
+                    [Source]            NVARCHAR(20)   NOT NULL DEFAULT 'Customer',
+                    [AdminNote]         NVARCHAR(1000) NULL,
+                    [CreatedAt]         DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+                    [ResolvedAt]        DATETIME2      NULL,
+                    CONSTRAINT [FK_Complaints_Customer]
+                        FOREIGN KEY ([CustomerId]) REFERENCES [Users]([Id]),
+                    CONSTRAINT [FK_Complaints_Order]
+                        FOREIGN KEY ([OrderId]) REFERENCES [Orders]([Id])
+                );
+                CREATE INDEX [IX_Complaints_CustomerId] ON [dbo].[Complaints]([CustomerId]);
+                CREATE INDEX [IX_Complaints_Status] ON [dbo].[Complaints]([Status]);
+            END
+        ");
+        Console.WriteLine("[Startup] AiSettings/SupportSessions/SupportMessages/Complaints tables ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] AI support/complaints tables check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();
