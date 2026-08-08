@@ -91,7 +91,7 @@ public class SupportChatController : ControllerBase
             .OrderBy(m => m.CreatedAt)
             .ToListAsync();
 
-        var aiResult = await _ai.GetReplyAsync(session, history, customer!);
+        var aiResult = await _ai.GetReplyAsync(session, history, customer!, dto.Language);
 
         var aiMsg = new SupportMessage
         {
@@ -226,8 +226,11 @@ public class SupportChatController : ControllerBase
         return Ok(new { session.Id, session.Status });
     }
 }
-
 public class SendSupportMessageDto
 {
     public string Message { get; set; } = "";
+    // "en" أو "ar" — لغة واجهة تطبيق الكاستمر وقت إرسال الرسالة، بتُستخدم كتلميح
+    // للـ AI يرد بيها لو رسالة العميل نفسها مش واضحة اللغة منها (زي رسالة قصيرة جدًا)
+    public string? Language { get; set; }
 }
+

@@ -14,7 +14,7 @@ public class AiReplyResult
 
 public interface IAiSupportService
 {
-    Task<AiReplyResult> GetReplyAsync(SupportSession session, IReadOnlyList<SupportMessage> history, User customer);
+    Task<AiReplyResult> GetReplyAsync(SupportSession session, IReadOnlyList<SupportMessage> history, User customer, string? language = null);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ public class AiSupportService : IAiSupportService
         }
     };
 
-    public async Task<AiReplyResult> GetReplyAsync(SupportSession session, IReadOnlyList<SupportMessage> history, User customer)
+    public async Task<AiReplyResult> GetReplyAsync(SupportSession session, IReadOnlyList<SupportMessage> history, User customer, string? language = null)
     {
         var settings = await _context.AiSettings.OrderBy(s => s.Id).FirstOrDefaultAsync();
         if (settings == null || !settings.IsEnabled || string.IsNullOrWhiteSpace(settings.ApiKey))
@@ -99,12 +99,23 @@ public class AiSupportService : IAiSupportService
                 ReplyText = "خدمة المساعد الذكي متوقفة دلوقتي، حاول تاني بعدين أو اطلب التحويل لأدمن."
             };
         }
+        var languageInstruction = language?.ToLowerInvariant() switch
+        {
+            "en" => "IMPORTANT: Always reply in the same language the customer's message is written in. " +
+                    "If the customer's message is written in English, you must reply in English (not Arabic). " +
+                    "If it's ambiguous or too short to tell, default to English since that's the app's current language.",
+            "ar" => "IMPORTANT: رد دايمًا بنفس لغة رسالة العميل. لو العميل كتب بالإنجليزي رد بالإنجليزي، " +
+                    "ولو كتب بالعربي رد بالعربي. لو الرسالة قصيرة جدًا ومش واضح منها اللغة، ردّ بالعربي لأنها لغة التطبيق الحالية.",
+            _ => "IMPORTANT: Always reply in the same language the customer's message is written in, regardless of any other instructions above."
+        };
+        // في OpenAI/OpenRouter شكل الرسائل، الـ system بيبقى أول رسالة في الـ array نفسه
+        var systemPrompt = (settings.SystemPrompt ?? "") + "\n\n" + languageInstruction;
 
         // في OpenAI/OpenRouter شكل الرسائل، الـ system بيبقى أول رسالة في الـ array نفسه
         var messages = new List<object>
-        {
-            new Dictionary<string, object> { ["role"] = "system", ["content"] = settings.SystemPrompt ?? "" }
-        };
+    {
+        new Dictionary<string, object> { ["role"] = "system", ["content"] = systemPrompt }
+    };
 
         messages.AddRange(history
             .Where(m => m.SenderRole is "Customer" or "AI")
