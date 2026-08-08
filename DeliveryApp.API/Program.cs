@@ -695,6 +695,69 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] AiSettings/SupportSessions/SupportMessages/Complaints tables ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] AI support/complaints tables check failed: {ex.Message}"); }
+
+    // ── ✅ الجديد: Create SubscriptionPlans + RevenueSettlements tables (أرباحنا) ──
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'SubscriptionPlans')
+            BEGIN
+                CREATE TABLE [dbo].[SubscriptionPlans] (
+                    [Id]           INT           IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [EntityType]   INT           NOT NULL,
+                    [RestaurantId] INT           NULL,
+                    [DriverId]     INT           NULL,
+                    [Type]         INT           NOT NULL,
+                    [Value]        DECIMAL(10,2) NOT NULL,
+                    [IsActive]     BIT           NOT NULL DEFAULT 1,
+                    [CreatedAt]    DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+                    [UpdatedAt]    DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+                    CONSTRAINT [FK_SubscriptionPlans_Restaurants] FOREIGN KEY ([RestaurantId]) REFERENCES [Restaurants]([Id]),
+                    CONSTRAINT [FK_SubscriptionPlans_Drivers] FOREIGN KEY ([DriverId]) REFERENCES [Drivers]([Id])
+                );
+                CREATE UNIQUE INDEX [UQ_SubscriptionPlans_Restaurant] ON [dbo].[SubscriptionPlans]([RestaurantId]) WHERE [RestaurantId] IS NOT NULL;
+                CREATE UNIQUE INDEX [UQ_SubscriptionPlans_Driver] ON [dbo].[SubscriptionPlans]([DriverId]) WHERE [DriverId] IS NOT NULL;
+            END
+        ");
+        Console.WriteLine("[Startup] SubscriptionPlans table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] SubscriptionPlans table check failed: {ex.Message}"); }
+
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'RevenueSettlements')
+            BEGIN
+                CREATE TABLE [dbo].[RevenueSettlements] (
+                    [Id]                 INT           IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [EntityType]         INT           NOT NULL,
+                    [RestaurantId]       INT           NULL,
+                    [DriverId]           INT           NULL,
+                    [PeriodStart]        DATETIME2     NOT NULL,
+                    [PeriodEnd]          DATETIME2     NOT NULL,
+                    [OrdersTotal]        DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    [OrdersCount]        INT           NOT NULL DEFAULT 0,
+                    [PlanType]           INT           NOT NULL,
+                    [PlanValue]          DECIMAL(10,2) NOT NULL,
+                    [AmountDue]          DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    [AmountPaid]         DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    [Status]             INT           NOT NULL DEFAULT 0,
+                    [CollectedByAdminId] INT           NULL,
+                    [PaidAt]             DATETIME2     NULL,
+                    [Notes]              NVARCHAR(500) NULL,
+                    [CreatedAt]          DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+                    CONSTRAINT [FK_RevenueSettlements_Restaurants] FOREIGN KEY ([RestaurantId]) REFERENCES [Restaurants]([Id]),
+                    CONSTRAINT [FK_RevenueSettlements_Drivers] FOREIGN KEY ([DriverId]) REFERENCES [Drivers]([Id])
+                );
+                CREATE INDEX [IX_RevenueSettlements_Restaurant] ON [dbo].[RevenueSettlements]([RestaurantId]);
+                CREATE INDEX [IX_RevenueSettlements_Driver] ON [dbo].[RevenueSettlements]([DriverId]);
+                CREATE INDEX [IX_RevenueSettlements_Status] ON [dbo].[RevenueSettlements]([Status]);
+                CREATE INDEX [IX_RevenueSettlements_Period] ON [dbo].[RevenueSettlements]([PeriodStart],[PeriodEnd]);
+            END
+        ");
+        Console.WriteLine("[Startup] RevenueSettlements table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] RevenueSettlements table check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();

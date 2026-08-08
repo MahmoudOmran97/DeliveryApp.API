@@ -63,6 +63,10 @@ public partial class ApplicationDbContext : DbContext
     public virtual DbSet<SupportMessage> SupportMessages { get; set; }
     public virtual DbSet<Complaint> Complaints { get; set; }
 
+    public virtual DbSet<SubscriptionPlan> SubscriptionPlans { get; set; }
+
+    public virtual DbSet<RevenueSettlement> RevenueSettlements { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
     }
