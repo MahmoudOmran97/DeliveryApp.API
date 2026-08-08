@@ -142,9 +142,12 @@ public class CouponsController : ControllerBase
     public async Task<IActionResult> GetAllAdmin()
     {
         var now = DateTime.UtcNow;
-        var coupons = await _db.Coupons
-            .OrderByDescending(c => c.CreatedAt)
-            .Select(c => new
+        var coupons = await (
+            from c in _db.Coupons
+            join u in _db.Users on c.OwnerUserId equals u.Id into ownerJoin
+            from owner in ownerJoin.DefaultIfEmpty()
+            orderby c.CreatedAt descending
+            select new
             {
                 c.Id,
                 c.Code,
@@ -157,6 +160,7 @@ public class CouponsController : ControllerBase
                 c.RestaurantId,
                 RestaurantName = c.Restaurant != null ? c.Restaurant.Name : null,
                 c.OwnerUserId,
+                OwnerUserName = owner != null ? owner.FullName : null,
                 c.UsageLimit,
                 c.ExpiresAt,
                 c.CreatedAt,
