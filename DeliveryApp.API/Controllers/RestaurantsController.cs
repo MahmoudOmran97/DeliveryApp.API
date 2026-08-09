@@ -259,11 +259,29 @@ public class RestaurantsController : ControllerBase
     }
 
     // ─── GET /api/restaurants/{id}/menu  (public) ───────────────────────────
+    // ✅ FEATURE: كل منتج بيرجع دلوقتي SalesCount (عدد مرات بيعه فعليًا في أوردرات
+    // "Delivered") و IsBestSeller (true لو من أعلى 10 منتجات مبيعًا في المحل ده،
+    // بشرط يبقى اتباع مرة واحدة على الأقل) — العميل (Customer app) بيستخدمهم في
+    // فرز/فلترة صفحة "الأفضل مبيعًا".
     [HttpGet("{id}/menu")]
     public async Task<IActionResult> GetMenu(int id)
     {
         var exists = await _context.Restaurants.AnyAsync(r => r.Id == id && r.IsActive);
         if (!exists) return NotFound(new { message = "Restaurant not found" });
+
+        // عدد مرات بيع كل منتج (Quantity الإجمالية في أوردرات اتسلمت فعلاً)
+        var salesCounts = await _context.OrderItems
+            .Where(oi => oi.Order.RestaurantId == id && oi.Order.Status == "Delivered")
+            .GroupBy(oi => oi.ProductId)
+            .Select(g => new { ProductId = g.Key, Count = g.Sum(x => x.Quantity) })
+            .ToDictionaryAsync(x => x.ProductId, x => x.Count);
+
+        // أعلى 10 منتجات مبيعًا في المحل (SalesCount > 0)
+        var bestSellerIds = salesCounts
+            .OrderByDescending(x => x.Value)
+            .Take(10)
+            .Select(x => x.Key)
+            .ToHashSet();
 
         var menu = await _context.Categories
             .Where(c => c.RestaurantId == id && c.IsActive)
@@ -297,7 +315,121 @@ public class RestaurantsController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(menu);
+        // بنلحق SalesCount/IsBestSeller بعد الاستعلام (Dictionary lookup مش قابل للترجمة
+        // في نفس الـ EF query فوق) — anonymous types بنعمل منها object جديد فيه الحقلين.
+        var result = menu.Select(c => new
+        {
+            c.Id,
+            c.Name,
+            c.ImageUrl,
+            Products = c.Products.Select(p => new
+            {
+                p.Id,
+                p.Name,
+                p.Description,
+                p.Price,
+                p.DiscountedPrice,
+                p.ImageUrl,
+                p.PreparationTime,
+                p.Calories,
+                p.IsAvailable,
+                p.CategoryId,
+                p.CategoryName,
+                p.Variants,
+                SalesCount = salesCounts.TryGetValue(p.Id, out var cnt) ? cnt : 0,
+                IsBestSeller = bestSellerIds.Contains(p.Id)
+            }).ToList()
+        }).ToList();
+
+        return Ok(result);
+    }
+
+    // ─── GET /api/restaurants/{id}/products/{productId}/related  (public) ──
+    // ✅ FEATURE: "بيتطلب مع" — منتجات اتشترت فعليًا مع المنتج ده في نفس الأوردر
+    // (تحليل حقيقي من جدول OrderItems)، مرتبة حسب عدد مرات الاشتراك. لو مفيش
+    // بيانات كفاية (منتج جديد/محل جديد)، بنرجع بدالها أعلى منتجات مبيعًا من
+    // نفس الكاتيجوري كـ fallback بديهي.
+    [HttpGet("{id}/products/{productId}/related")]
+    public async Task<IActionResult> GetRelatedProducts(int id, int productId, [FromQuery] int take = 6)
+    {
+        var product = await _context.Products
+            .Include(p => p.Category)
+            .FirstOrDefaultAsync(p => p.Id == productId && p.Category.RestaurantId == id);
+        if (product == null) return NotFound(new { message = "Product not found" });
+
+        // الأوردرات اللي اشترت المنتج ده
+        var orderIds = await _context.OrderItems
+            .Where(oi => oi.ProductId == productId)
+            .Select(oi => oi.OrderId)
+            .Distinct()
+            .ToListAsync();
+
+        var coProductIds = new List<int>();
+        if (orderIds.Count > 0)
+        {
+            coProductIds = await _context.OrderItems
+                .Where(oi => orderIds.Contains(oi.OrderId) && oi.ProductId != productId)
+                .GroupBy(oi => oi.ProductId)
+                .OrderByDescending(g => g.Count())
+                .Select(g => g.Key)
+                .Take(take)
+                .ToListAsync();
+        }
+
+        // لو مفيش نتيجة كفاية، كمّل بمنتجات تانية من نفس الكاتيجوري (الأعلى مبيعًا)
+        if (coProductIds.Count < take)
+        {
+            var salesCounts = await _context.OrderItems
+                .Where(oi => oi.Order.RestaurantId == id && oi.Order.Status == "Delivered")
+                .GroupBy(oi => oi.ProductId)
+                .Select(g => new { ProductId = g.Key, Count = g.Sum(x => x.Quantity) })
+                .ToDictionaryAsync(x => x.ProductId, x => x.Count);
+
+            var fallbackIds = await _context.Products
+                .Where(p => p.CategoryId == product.CategoryId && p.IsActive && p.IsAvailable
+                    && p.Id != productId && !coProductIds.Contains(p.Id))
+                .Select(p => p.Id)
+                .ToListAsync();
+
+            var ordered = fallbackIds
+                .OrderByDescending(pid => salesCounts.TryGetValue(pid, out var c) ? c : 0)
+                .Take(take - coProductIds.Count);
+
+            coProductIds.AddRange(ordered);
+        }
+
+        if (coProductIds.Count == 0) return Ok(new List<object>());
+
+        var products = await _context.Products
+            .Where(p => coProductIds.Contains(p.Id) && p.IsActive && p.IsAvailable)
+            .Select(p => new
+            {
+                p.Id,
+                p.Name,
+                p.Description,
+                p.Price,
+                p.DiscountedPrice,
+                p.ImageUrl,
+                p.PreparationTime,
+                p.Calories,
+                p.IsAvailable,
+                CategoryId = p.CategoryId,
+                CategoryName = p.Category.Name,
+                Variants = p.Variants
+                    .Where(v => v.IsActive)
+                    .OrderBy(v => v.SortOrder)
+                    .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder })
+                    .ToList()
+            })
+            .ToListAsync();
+
+        // نحافظ على نفس ترتيب coProductIds (الأكتر تطلب مع بعض الأول)
+        var ordered2 = coProductIds
+            .Select(pid => products.FirstOrDefault(p => p.Id == pid))
+            .Where(p => p != null)
+            .ToList();
+
+        return Ok(ordered2);
     }
 
     // ─── GET /api/restaurants/nearby  (public) ──────────────────────────────
