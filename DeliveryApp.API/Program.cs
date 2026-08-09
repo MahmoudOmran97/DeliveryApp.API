@@ -18,6 +18,8 @@ builder.Services.AddScoped<IHubService, HubService>();
 builder.Services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
 builder.Services.AddHttpClient("fcm");
 builder.Services.AddScoped<IFcmService, FcmService>();
+builder.Services.AddHttpClient("cloudinary");
+builder.Services.AddScoped<IImageStorageService, CloudinaryStorageService>();
 builder.Services.AddScoped<IPointsService, PointsService>();
 
 // ✅ الجديد: خدمات الـ OTP (إرسال إيميل + توليد/تحقق الكود)
