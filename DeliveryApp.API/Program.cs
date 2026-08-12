@@ -764,6 +764,7 @@ using (var scope = app.Services.CreateScope())
     // ── Public website and social links ───────────────────────────────────────
     try
     {
+        // خطوة 1: إنشاء الجدول لو مش موجود (ده مكانش بيحصل غير أول مرة)
         await db.Database.ExecuteSqlRawAsync(@"
             IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'SiteLinks')
             BEGIN
@@ -778,14 +779,33 @@ using (var scope = app.Services.CreateScope())
                     [UpdatedAt] DATETIME2      NOT NULL DEFAULT GETUTCDATE()
                 );
                 CREATE UNIQUE INDEX [UQ_SiteLinks_Key] ON [dbo].[SiteLinks]([Key]);
-                INSERT INTO [dbo].[SiteLinks] ([Key],[Title],[Url],[Icon],[IsActive],[SortOrder])
-                VALUES
-                    (N'website',  N'Website',  N'https://Taly-app.com',              N'web',       1, 1),
-                    (N'facebook', N'Facebook', N'https://facebook.com/Taly',         N'facebook',  1, 2),
-                    (N'instagram',N'Instagram',N'https://instagram.com/Taly',        N'instagram', 1, 3),
-                    (N'x',        N'X',        N'https://x.com/Taly',                 N'x',         1, 4),
-                    (N'tiktok',   N'TikTok',   N'https://www.tiktok.com/@Taly',      N'tiktok',    1, 5);
             END
+        ");
+
+        // خطوة 2: تأكيد وجود الصفوف الافتراضية دايمًا، حتى لو الجدول كان موجود
+        // من قبل من غير بيانات (ده كان سبب رجوع اللينكات فاضية: الـ INSERT
+        // القديم كان جوه نفس الـ IF NOT EXISTS بتاعة إنشاء الجدول، فلو الجدول
+        // كان موجود بالفعل (فاضي) الـ seed مكانش بيتنفذ خالص).
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM [dbo].[SiteLinks] WHERE [Key] = N'website')
+                INSERT INTO [dbo].[SiteLinks] ([Key],[Title],[Url],[Icon],[IsActive],[SortOrder])
+                VALUES (N'website', N'Website', N'https://Taly-app.com', N'web', 1, 1);
+
+            IF NOT EXISTS (SELECT 1 FROM [dbo].[SiteLinks] WHERE [Key] = N'facebook')
+                INSERT INTO [dbo].[SiteLinks] ([Key],[Title],[Url],[Icon],[IsActive],[SortOrder])
+                VALUES (N'facebook', N'Facebook', N'https://facebook.com/Taly', N'facebook', 1, 2);
+
+            IF NOT EXISTS (SELECT 1 FROM [dbo].[SiteLinks] WHERE [Key] = N'instagram')
+                INSERT INTO [dbo].[SiteLinks] ([Key],[Title],[Url],[Icon],[IsActive],[SortOrder])
+                VALUES (N'instagram', N'Instagram', N'https://instagram.com/Taly', N'instagram', 1, 3);
+
+            IF NOT EXISTS (SELECT 1 FROM [dbo].[SiteLinks] WHERE [Key] = N'x')
+                INSERT INTO [dbo].[SiteLinks] ([Key],[Title],[Url],[Icon],[IsActive],[SortOrder])
+                VALUES (N'x', N'X', N'https://x.com/Taly', N'x', 1, 4);
+
+            IF NOT EXISTS (SELECT 1 FROM [dbo].[SiteLinks] WHERE [Key] = N'tiktok')
+                INSERT INTO [dbo].[SiteLinks] ([Key],[Title],[Url],[Icon],[IsActive],[SortOrder])
+                VALUES (N'tiktok', N'TikTok', N'https://www.tiktok.com/@Taly', N'tiktok', 1, 5);
         ");
         Console.WriteLine("[Startup] SiteLinks table ready.");
     }
