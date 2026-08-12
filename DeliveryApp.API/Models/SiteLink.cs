@@ -32,3 +32,14 @@ public sealed class SiteLinkDto
     public string? Icon { get; set; }
     public int SortOrder { get; set; }
 }
+
+public sealed class SiteLinkAdminDto
+{
+    public string Key { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string? Icon { get; set; }
+    public bool IsActive { get; set; }
+    public int SortOrder { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}

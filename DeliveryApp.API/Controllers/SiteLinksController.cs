@@ -42,6 +42,32 @@ public class SiteLinksController : ControllerBase
     }
 
     /// <summary>
+    /// Admin list endpoint. Includes active and inactive links for the admin dashboard.
+    /// </summary>
+    [Authorize(Roles = "Admin")]
+    [HttpGet("admin")]
+    public async Task<ActionResult<IEnumerable<SiteLinkAdminDto>>> GetAdminLinks(CancellationToken cancellationToken)
+    {
+        var links = await _db.SiteLinks
+            .AsNoTracking()
+            .OrderBy(x => x.SortOrder)
+            .ThenBy(x => x.Key)
+            .Select(x => new SiteLinkAdminDto
+            {
+                Key = x.Key,
+                Title = x.Title,
+                Url = x.Url,
+                Icon = x.Icon,
+                IsActive = x.IsActive,
+                SortOrder = x.SortOrder,
+                UpdatedAt = x.UpdatedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(links);
+    }
+
+    /// <summary>
     /// Admin upsert endpoint. Example key values: website, facebook, instagram, tiktok, x.
     /// </summary>
     [Authorize(Roles = "Admin")]
