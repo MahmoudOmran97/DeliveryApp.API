@@ -760,6 +760,36 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] RevenueSettlements table ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] RevenueSettlements table check failed: {ex.Message}"); }
+
+    // ── Public website and social links ───────────────────────────────────────
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'SiteLinks')
+            BEGIN
+                CREATE TABLE [dbo].[SiteLinks] (
+                    [Id]        INT            IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [Key]       NVARCHAR(50)   NOT NULL,
+                    [Title]     NVARCHAR(100)  NOT NULL,
+                    [Url]       NVARCHAR(500)  NOT NULL,
+                    [Icon]      NVARCHAR(100)  NULL,
+                    [IsActive]  BIT            NOT NULL DEFAULT 1,
+                    [SortOrder] INT            NOT NULL DEFAULT 0,
+                    [UpdatedAt] DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+                );
+                CREATE UNIQUE INDEX [UQ_SiteLinks_Key] ON [dbo].[SiteLinks]([Key]);
+                INSERT INTO [dbo].[SiteLinks] ([Key],[Title],[Url],[Icon],[IsActive],[SortOrder])
+                VALUES
+                    (N'website',  N'Website',  N'https://Taly-app.com',              N'web',       1, 1),
+                    (N'facebook', N'Facebook', N'https://facebook.com/Taly',         N'facebook',  1, 2),
+                    (N'instagram',N'Instagram',N'https://instagram.com/Taly',        N'instagram', 1, 3),
+                    (N'x',        N'X',        N'https://x.com/Taly',                 N'x',         1, 4),
+                    (N'tiktok',   N'TikTok',   N'https://www.tiktok.com/@Taly',      N'tiktok',    1, 5);
+            END
+        ");
+        Console.WriteLine("[Startup] SiteLinks table ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] SiteLinks table check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();

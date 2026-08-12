@@ -67,6 +67,8 @@ public partial class ApplicationDbContext : DbContext
 
     public virtual DbSet<RevenueSettlement> RevenueSettlements { get; set; }
 
+    public virtual DbSet<SiteLink> SiteLinks { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
     }
