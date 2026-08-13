@@ -470,6 +470,15 @@ namespace DeliveryApp.API.Controllers
         }
 
         // DELETE api/user/me  — حذف الحساب
+        //
+        // الاستراتيجية: حذف فعلي (Hard Delete) لكل البيانات الشخصية البحتة
+        // (إشعارات، نقاط، كوبونات مستخدمة، أكواد OTP)، مع عمل Anonymize لصف
+        // اليوزر نفسه (مسح الاسم/الإيميل/التليفون/العنوان/الصورة) بدل حذفه
+        // نهائيًا. السبب: صف اليوزر مرتبط بجداول Orders/Ratings/ChatMessages
+        // اللي المطعم والسائق والأدمن محتاجينها لسجلات الإيرادات والدعم،
+        // فحذف الصف نهائيًا كان هيمسح كل ده معاه أو يسبب FK constraint error.
+        // النتيجة: مفيش أي بيانات شخصية تخص اليوزر باقية، لكن سجل الأوردرات
+        // والتقييمات بيفضل موجود لصاحب المحل/السائق بدون ما يدل على هوية اليوزر.
         [HttpDelete("me")]
         public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountDto dto)
         {
@@ -479,11 +488,51 @@ namespace DeliveryApp.API.Controllers
             if (!BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))
                 return BadRequest(new { message = "Incorrect password" });
 
-            user.IsActive = false;  // Soft delete
+            var userId = user.Id;
+
+            // 1) حذف الإشعارات نهائيًا
+            var notifications = await _context.Notifications
+                .Where(n => n.UserId == userId)
+                .ToListAsync();
+            if (notifications.Count > 0)
+                _context.Notifications.RemoveRange(notifications);
+
+            // 2) حذف سجل النقاط نهائيًا
+            var pointTransactions = await _context.PointTransactions
+                .Where(t => t.UserId == userId)
+                .ToListAsync();
+            if (pointTransactions.Count > 0)
+                _context.PointTransactions.RemoveRange(pointTransactions);
+
+            // 3) حذف سجل الكوبونات المستخدمة نهائيًا
+            var userCoupons = await _context.UserCoupons
+                .Where(uc => uc.UserId == userId)
+                .ToListAsync();
+            if (userCoupons.Count > 0)
+                _context.UserCoupons.RemoveRange(userCoupons);
+
+            // 4) حذف أكواد OTP المرتبطة بإيميل الحساب نهائيًا
+            var otpCodes = await _context.OtpCodes
+                .Where(o => o.Email == user.Email)
+                .ToListAsync();
+            if (otpCodes.Count > 0)
+                _context.OtpCodes.RemoveRange(otpCodes);
+
+            // 5) Anonymize بيانات اليوزر نفسه (بدون حذف الصف عشان الـ Orders/Ratings
+            //    المرتبطة بيه تفضل شغالة لصاحب المحل والسائق)
+            user.FullName = "مستخدم محذوف";
+            user.Email = $"deleted_{userId}_{Guid.NewGuid():N}@deleted.tawseela";
+            user.Phone = $"deleted_{userId}";
+            user.Address = null;
+            user.ProfileImageUrl = null;
+            user.Fcmtoken = null;
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString()); // باسورد عشوائي غير قابل للاستخدام
+            user.IsActive = false;
             user.UpdatedAt = DateTime.UtcNow;
+
             await _context.SaveChangesAsync();
 
-            return Ok(new { message = "Account deactivated successfully" });
+            return Ok(new { message = "Account deleted successfully" });
         }
     }
 

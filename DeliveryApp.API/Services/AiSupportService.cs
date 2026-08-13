@@ -145,7 +145,7 @@ public class AiSupportService : IAiSupportService
             request.Headers.Add("Authorization", $"Bearer {settings.ApiKey}");
             // OpenRouter بيستحسن الهيدرز دي (اختيارية) عشان يظهر التطبيق في لوحة تحكمهم
             request.Headers.Add("HTTP-Referer", "https://tawseela.app");
-            request.Headers.Add("X-Title", "Tawseela Support Chat");
+            request.Headers.Add("X-Title", "Taly Support Chat");
             request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
             HttpResponseMessage response;
@@ -195,7 +195,7 @@ public class AiSupportService : IAiSupportService
 
             if (toolCalls.Count == 0)
             {
-                result.ReplyText = textPart ?? "تمام 👍";
+                result.ReplyText = textPart ?? "👍";
                 return result;
             }
 
