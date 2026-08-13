@@ -754,6 +754,30 @@ namespace DeliveryApp.API.Controllers
         }
 
         // ─────────────────────────────────────────────
+        // PUT api/orders/{id}/estimated-time
+        // مراجعة/تعديل الأدمن للرينج المحسوب تلقائي (Min/Max بالدقايق)
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Admin")]
+        [HttpPut("{id}/estimated-time")]
+        public async Task<IActionResult> UpdateEstimatedTime(int id, [FromBody] UpdateEstimatedTimeDto dto)
+        {
+            if (dto.Min < 1 || dto.Max < dto.Min)
+                return BadRequest(new { message = "Invalid range: min must be >= 1 and max must be >= min." });
+
+            var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == id);
+            if (order == null) return NotFound();
+
+            order.EstimatedDeliveryMin = dto.Min;
+            order.EstimatedDeliveryMax = dto.Max;
+            order.EstimatedDelivery = dto.Max; // للتوافق مع الكود القديم
+
+            await _context.SaveChangesAsync();
+            await _hubService.NotifyOrderStatusChanged(order.Id, order.Status);
+
+            return Ok(new { message = "Estimated time updated", order.EstimatedDeliveryMin, order.EstimatedDeliveryMax });
+        }
+
+        // ─────────────────────────────────────────────
         // PUT api/orders/{id}/cancel
         // ─────────────────────────────────────────────
         [HttpPut("{id}/cancel")]
@@ -989,4 +1013,5 @@ namespace DeliveryApp.API.Controllers
 
     public class CancelOrderDto { public string? Reason { get; set; } }
     public class UpdateStatusDto { public string Status { get; set; } = string.Empty; }
+    public class UpdateEstimatedTimeDto { public int Min { get; set; } public int Max { get; set; } }
 }
