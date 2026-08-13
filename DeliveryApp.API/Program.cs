@@ -603,6 +603,21 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] Notifications.ActionUrl check failed: {ex.Message}"); }
 
+    // ── ✅ الجديد: Orders.EstimatedDeliveryMin/Max — رينج زمن التحضير الحقيقي
+    // (بيتحسب وقت القبول من وقت المحل + وقت تحضير المنتجات، بدل التايمر الثابت) ──
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Orders' AND COLUMN_NAME = 'EstimatedDeliveryMin')
+                ALTER TABLE [dbo].[Orders] ADD [EstimatedDeliveryMin] INT NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Orders' AND COLUMN_NAME = 'EstimatedDeliveryMax')
+                ALTER TABLE [dbo].[Orders] ADD [EstimatedDeliveryMax] INT NULL;
+        ");
+        Console.WriteLine("[Startup] Orders.EstimatedDeliveryMin/Max columns ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Orders.EstimatedDeliveryMin/Max check failed: {ex.Message}"); }
+
     // ── ✅ الجديد: AiSettings + SupportSessions/SupportMessages + Complaints ──
     // شات الدعم بالـ AI (اللي بيتحكم فيه الأدمن) + جدول الشكاوى.
     try

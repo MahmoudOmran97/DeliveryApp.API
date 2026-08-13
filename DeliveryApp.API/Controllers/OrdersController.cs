@@ -32,6 +32,24 @@ namespace DeliveryApp.API.Controllers
             int.Parse(User.Claims.First(c => c.Type == ClaimTypes.NameIdentifier
                                           || c.Type == "sub").Value);
 
+        // ✅ الجديد: حساب رينج زمن التحضير الحقيقي وقت ما المحل يقبل الأوردر —
+        // بيدمج الوقت المتحدد على المحل (Restaurant.EstimatedTime) مع أطول
+        // PreparationTime بين منتجات الأوردر (أبطأ صنف هو اللي بيحدد وقت المطبخ،
+        // لأن الأصناف بتتحضر بالتوازي مش الواحد بعد التاني).
+        private async Task<(int Min, int Max)> ComputeEstimatedDeliveryRangeAsync(int orderId, int restaurantEstimatedTime)
+        {
+            var maxPrepTime = await _context.OrderItems
+                .Where(oi => oi.OrderId == orderId)
+                .Select(oi => (int?)oi.Product.PreparationTime)
+                .MaxAsync() ?? 0;
+
+            var min = Math.Clamp(restaurantEstimatedTime, 10, 90);
+            var max = min + Math.Clamp(maxPrepTime, 0, 60);
+            if (max <= min) max = min + 10; // نضمن رينج حقيقي حتى لو مفيش بيانات PreparationTime
+
+            return (min, max);
+        }
+
         // ─────────────────────────────────────────────
         // POST api/orders
         // ─────────────────────────────────────────────
@@ -452,6 +470,8 @@ namespace DeliveryApp.API.Controllers
                     o.DeliveryLongitude,
                     o.DeliveryNotes,
                     o.EstimatedDelivery,
+                    o.EstimatedDeliveryMin,
+                    o.EstimatedDeliveryMax,
                     o.CancellationReason,
                     o.CreatedAt,
                     o.AcceptedAt,
@@ -612,6 +632,8 @@ namespace DeliveryApp.API.Controllers
                     o.DeliveryAddress,
                     o.DeliveryNotes,
                     o.EstimatedDelivery,
+                    o.EstimatedDeliveryMin,
+                    o.EstimatedDeliveryMax,
                     o.CancellationReason,
                     o.CreatedAt,
                     o.AcceptedAt,
@@ -686,7 +708,14 @@ namespace DeliveryApp.API.Controllers
 
             order.Status = dto.Status;
 
-            if (dto.Status == "Accepted") order.AcceptedAt = DateTime.UtcNow;
+            if (dto.Status == "Accepted")
+            {
+                order.AcceptedAt = DateTime.UtcNow;
+                var (min, max) = await ComputeEstimatedDeliveryRangeAsync(order.Id, order.Restaurant.EstimatedTime);
+                order.EstimatedDeliveryMin = min;
+                order.EstimatedDeliveryMax = max;
+                order.EstimatedDelivery = max; // للتوافق مع أي كود قديم بيقرأ القيمة الواحدة دي
+            }
 
             var statusTypes = new[] { "Accepted", "Preparing", "ReadyForPickup", "Rejected" };
             if (statusTypes.Contains(dto.Status))
@@ -796,7 +825,13 @@ namespace DeliveryApp.API.Controllers
 
             switch (dto.Status)
             {
-                case "Accepted": order.AcceptedAt = DateTime.UtcNow; break;
+                case "Accepted":
+                    order.AcceptedAt = DateTime.UtcNow;
+                    var (min, max) = await ComputeEstimatedDeliveryRangeAsync(order.Id, order.Restaurant.EstimatedTime);
+                    order.EstimatedDeliveryMin = min;
+                    order.EstimatedDeliveryMax = max;
+                    order.EstimatedDelivery = max;
+                    break;
                 case "OnTheWay": order.PickedUpAt = DateTime.UtcNow; break;
                 case "Delivered":
                     order.DeliveredAt = DateTime.UtcNow;

@@ -55,6 +55,15 @@ public partial class Order
 
     public int? EstimatedDelivery { get; set; }
 
+    /// <summary>
+    /// رينج زمن التحضير الحقيقي (بالدقايق) — بيتحسب وقت ما المحل يقبل الأوردر
+    /// من Restaurant.EstimatedTime + أطول PreparationTime بين منتجات الأوردر.
+    /// EstimatedDelivery فوق فضل كما هو (بياخد قيمة Max) عشان التوافق مع أي كود قديم.
+    /// </summary>
+    public int? EstimatedDeliveryMin { get; set; }
+
+    public int? EstimatedDeliveryMax { get; set; }
+
     [StringLength(300)]
     public string? CancellationReason { get; set; }
 
