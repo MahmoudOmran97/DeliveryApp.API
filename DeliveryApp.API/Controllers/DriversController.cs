@@ -222,7 +222,7 @@ namespace DeliveryApp.API.Controllers
 
             var order = await _context.Orders
                 .Where(o => o.DriverId == driver.Id &&
-                            new[] { "OnTheWay", "ReadyForPickup" }.Contains(o.Status))
+                            new[] { "Preparing", "ReadyForPickup", "OnTheWay" }.Contains(o.Status))
                 .Select(o => new
                 {
                     o.Id,
@@ -233,6 +233,8 @@ namespace DeliveryApp.API.Controllers
                     o.DeliveryLatitude,
                     o.DeliveryLongitude,
                     o.DeliveryNotes,
+                    o.EstimatedDeliveryMin,
+                    o.EstimatedDeliveryMax,
                     CustomerName = o.Customer.FullName,
                     // CustomerPhone = o.Customer.Phone, // Hidden as per requirement
                     RestaurantName = o.Restaurant.Name,

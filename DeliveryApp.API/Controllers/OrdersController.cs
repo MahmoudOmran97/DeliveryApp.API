@@ -925,7 +925,7 @@ namespace DeliveryApp.API.Controllers
         public async Task<IActionResult> GetAvailableOrders()
         {
             var orders = await _context.Orders
-                .Where(o => o.Status == "ReadyForPickup" && o.DriverId == null)
+                .Where(o => new[] { "Preparing", "ReadyForPickup" }.Contains(o.Status) && o.DriverId == null)
                 .Select(o => new
                 {
                     o.Id,
@@ -935,12 +935,19 @@ namespace DeliveryApp.API.Controllers
                     o.DeliveryLatitude,
                     o.DeliveryLongitude,
                     o.CreatedAt,
+                    o.Status,
+                    o.EstimatedDeliveryMin,
+                    o.EstimatedDeliveryMax,
                     RestaurantName = o.Restaurant.Name,
+                    RestaurantAddress = o.Restaurant.Address,
                     RestaurantLat = o.Restaurant.Latitude,
                     RestaurantLng = o.Restaurant.Longitude,
+                    DistanceKm = 111.045 * Math.Sqrt(
+                        Math.Pow((double)o.DeliveryLatitude - o.Restaurant.Latitude, 2) +
+                        Math.Pow(((double)o.DeliveryLongitude - o.Restaurant.Longitude) * Math.Cos(o.Restaurant.Latitude * Math.PI / 180.0), 2)),
                     ItemCount = o.OrderItems.Count
                 })
-                .OrderBy(o => o.CreatedAt)
+                .OrderByDescending(o => o.CreatedAt)
                 .ToListAsync();
 
             return Ok(orders);
@@ -958,7 +965,7 @@ namespace DeliveryApp.API.Controllers
             if (driver == null) return Forbid();
 
             var order = await _context.Orders
-                .FirstOrDefaultAsync(o => o.Id == id && o.Status == "ReadyForPickup" && o.DriverId == null);
+                .FirstOrDefaultAsync(o => o.Id == id && new[] { "Preparing", "ReadyForPickup" }.Contains(o.Status) && o.DriverId == null);
             if (order == null)
                 return BadRequest(new { message = "Order not available" });
 
