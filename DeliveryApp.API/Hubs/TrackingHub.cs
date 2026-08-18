@@ -78,23 +78,11 @@ namespace DeliveryApp.API.Hubs
                 return;
             }
 
+            // سطر واحد ثابت بيتحدث لكل طيار — بلاش Insert في DriverLocations مع كل نبضة موقع
+            // (كان ده سبب تضخم الجدول لأنه بيتسجل كل ثوان طول مدة الطلب من غير حد يقراه)
             driver.CurrentLatitude = request.Latitude;
             driver.CurrentLongitude = request.Longitude;
             driver.LastLocationUpdate = DateTime.UtcNow;
-
-            if (request.OrderId.HasValue)
-            {
-                _context.DriverLocations.Add(new DriverLocation
-                {
-                    DriverId = driver.Id,
-                    OrderId = request.OrderId,
-                    Latitude = request.Latitude,
-                    Longitude = request.Longitude,
-                    Speed = request.Speed,
-                    Heading = request.Heading,
-                    Timestamp = DateTime.UtcNow
-                });
-            }
 
             await _context.SaveChangesAsync();
 

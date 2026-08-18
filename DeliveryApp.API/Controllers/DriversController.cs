@@ -109,25 +109,13 @@ namespace DeliveryApp.API.Controllers
             var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
             if (driver == null) return NotFound();
 
-            // تحديث الموقع الحالي في جدول Drivers
+            // تحديث الموقع الحالي في جدول Drivers فقط (سطر واحد ثابت لكل طيار بيتحدث)
+            // ملحوظة: شلنا الإضافة لجدول DriverLocations لأنه كان بيعمل Insert جديد
+            // مع كل تحديث موقع (كل ثوان) طول مدة الطلب، فيتضخم بسرعة رهيبة من غير أي فايدة
+            // لأن محدش بيقرأ منه أصلاً — التتبع اللحظي شغال بالكامل على Driver.CurrentLatitude/CurrentLongitude
             driver.CurrentLatitude = dto.Latitude;
             driver.CurrentLongitude = dto.Longitude;
             driver.LastLocationUpdate = DateTime.UtcNow;
-
-            // تسجيل في DriverLocations لو الطيار بيوصل طلب
-            if (dto.OrderId.HasValue)
-            {
-                _context.DriverLocations.Add(new DriverLocation
-                {
-                    DriverId = driver.Id,
-                    OrderId = dto.OrderId,
-                    Latitude = dto.Latitude,
-                    Longitude = dto.Longitude,
-                    Speed = dto.Speed,
-                    Heading = dto.Heading,
-                    Timestamp = DateTime.UtcNow
-                });
-            }
 
             await _context.SaveChangesAsync();
             return Ok(new { message = "Location updated" });
