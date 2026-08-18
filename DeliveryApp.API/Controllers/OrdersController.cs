@@ -924,7 +924,14 @@ namespace DeliveryApp.API.Controllers
         [HttpGet("available")]
         public async Task<IActionResult> GetAvailableOrders()
         {
-            var orders = await _context.Orders
+            var userId = GetUserId();
+            var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
+
+            // إحداثيات الدريفر الحالية (لازم يكون بعت آخر لوكيشن ليه)
+            double? driverLat = driver?.CurrentLatitude;
+            double? driverLng = driver?.CurrentLongitude;
+
+            var raw = await _context.Orders
                 .Where(o => new[] { "Preparing", "ReadyForPickup" }.Contains(o.Status) && o.DriverId == null)
                 .Select(o => new
                 {
@@ -942,15 +949,43 @@ namespace DeliveryApp.API.Controllers
                     RestaurantAddress = o.Restaurant.Address,
                     RestaurantLat = o.Restaurant.Latitude,
                     RestaurantLng = o.Restaurant.Longitude,
-                    DistanceKm = 111.045 * Math.Sqrt(
-                        Math.Pow((double)o.DeliveryLatitude - o.Restaurant.Latitude, 2) +
-                        Math.Pow(((double)o.DeliveryLongitude - o.Restaurant.Longitude) * Math.Cos(o.Restaurant.Latitude * Math.PI / 180.0), 2)),
                     ItemCount = o.OrderItems.Count
                 })
                 .OrderByDescending(o => o.CreatedAt)
                 .ToListAsync();
 
-            return Ok(orders);
+            // نحسب المسافة بين موقع الدريفر الحالي والمحل (مش بين المحل وعنوان التوصيل)
+            var withDistance = raw.Select(o => new
+            {
+                o.Id,
+                o.TotalAmount,
+                o.DeliveryFee,
+                o.DeliveryAddress,
+                o.DeliveryLatitude,
+                o.DeliveryLongitude,
+                o.CreatedAt,
+                o.Status,
+                o.EstimatedDeliveryMin,
+                o.EstimatedDeliveryMax,
+                o.RestaurantName,
+                o.RestaurantAddress,
+                o.RestaurantLat,
+                o.RestaurantLng,
+                o.ItemCount,
+                DistanceKm = (driverLat.HasValue && driverLng.HasValue)
+                    ? (double?)(111.045 * Math.Sqrt(
+                        Math.Pow(driverLat.Value - o.RestaurantLat, 2) +
+                        Math.Pow((driverLng.Value - o.RestaurantLng) * Math.Cos(o.RestaurantLat * Math.PI / 180.0), 2)))
+                    : null
+            });
+
+            // نعرض بس المحلات القريبة من الدريفر بمسافة 1 كيلومتر أو أقل.
+            // لو مفيش لوكيشن للدريفر أصلاً، نرجّع كل الطلبات بدون فلترة عشان ميظهرش الاستريم فاضي.
+            var filtered = (driverLat.HasValue && driverLng.HasValue)
+                ? withDistance.Where(o => o.DistanceKm.HasValue && o.DistanceKm.Value <= 1.0)
+                : withDistance;
+
+            return Ok(filtered.OrderByDescending(o => o.CreatedAt).ToList());
         }
 
         // ─────────────────────────────────────────────
@@ -963,6 +998,13 @@ namespace DeliveryApp.API.Controllers
             var userId = GetUserId();
             var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
             if (driver == null) return Forbid();
+
+            // الدريفر ميقدرش ياخد طلب جديد لو لسة معاه طلب شغال (لم يتسلم لحد دلوقتي)
+            var hasActiveOrder = await _context.Orders.AnyAsync(o =>
+                o.DriverId == driver.Id &&
+                new[] { "Preparing", "ReadyForPickup", "OnTheWay" }.Contains(o.Status));
+            if (hasActiveOrder)
+                return BadRequest(new { message = "You already have an active order. Deliver it before accepting a new one." });
 
             var order = await _context.Orders
                 .FirstOrDefaultAsync(o => o.Id == id && new[] { "Preparing", "ReadyForPickup" }.Contains(o.Status) && o.DriverId == null);

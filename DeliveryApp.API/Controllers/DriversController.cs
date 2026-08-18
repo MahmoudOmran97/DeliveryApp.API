@@ -235,6 +235,9 @@ namespace DeliveryApp.API.Controllers
                     o.DeliveryNotes,
                     o.EstimatedDeliveryMin,
                     o.EstimatedDeliveryMax,
+                    o.CreatedAt,
+                    o.AcceptedAt,
+                    o.PickedUpAt,
                     CustomerName = o.Customer.FullName,
                     // CustomerPhone = o.Customer.Phone, // Hidden as per requirement
                     RestaurantName = o.Restaurant.Name,
