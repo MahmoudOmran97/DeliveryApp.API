@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using System.Reflection;
 using static Azure.Core.HttpHeader;
 
@@ -71,6 +72,45 @@ public partial class ApplicationDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // =====================================================================
+        // ✅ إصلاح مشكلة التوقيت (Timezone Fix)
+        // =====================================================================
+        // المشكلة: التواريخ بتتسجل بالفعل بتوقيت UTC (DateTime.UtcNow) في أغلب
+        // الكود، وده صح، لكن SQL Server بيرجّع الـ DateTime من غير علامة توضح
+        // إنه UTC (DateTimeKind.Unspecified). فلما الـ API يرجّع البيانات JSON
+        // للتطبيقات (Customer/Driver/Admin)، القيمة بتتبعت من غير حرف "Z" في
+        // الآخر، فالتطبيقات بتفهمها غلط وتعتبرها وقت محلي زي ما هي (يعني بتوقيت
+        // السيرفر الخام) بدل ما تحوّلها لتوقيت مصر تلقائي.
+        //
+        // الحل: أي عمود DateTime بييجي من قاعدة البيانات، نعلّمه إنه UTC
+        // (DateTimeKind.Utc) قبل ما يوصل للـ JSON. وبكده أي تطبيق (المتصفح،
+        // MAUI، JS) هيقدر يحوّله لتوقيت مصر المحلي عنده تلقائي وبشكل صحيح.
+        // القيم المخزنة في الداتابيز نفسها مش بتتغيّر خالص، بس الـ "توصيف" بتاعها
+        // بيبقى صح.
+        var utcConverter = new ValueConverter<DateTime, DateTime>(
+            toDb => toDb, // بيتسجل زي ما هو (UTC) في القاعدة
+            fromDb => DateTime.SpecifyKind(fromDb, DateTimeKind.Utc)); // بيتعلّم إنه UTC وهو راجع
+
+        var nullableUtcConverter = new ValueConverter<DateTime?, DateTime?>(
+            toDb => toDb,
+            fromDb => fromDb.HasValue ? DateTime.SpecifyKind(fromDb.Value, DateTimeKind.Utc) : fromDb);
+
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetProperties())
+            {
+                if (property.ClrType == typeof(DateTime))
+                {
+                    property.SetValueConverter(utcConverter);
+                }
+                else if (property.ClrType == typeof(DateTime?))
+                {
+                    property.SetValueConverter(nullableUtcConverter);
+                }
+            }
+        }
+
+        OnModelCreatingPartial(modelBuilder);
     }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder);
