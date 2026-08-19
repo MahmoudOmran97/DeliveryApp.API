@@ -1,5 +1,6 @@
 using DeliveryApp.API.DTOs.Revenue;
 using DeliveryApp.API.Models;
+using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,7 +19,12 @@ namespace DeliveryApp.API.Controllers
     public class RevenueController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
-        public RevenueController(ApplicationDbContext context) => _context = context;
+        private readonly INotificationDispatcher _dispatcher;
+        public RevenueController(ApplicationDbContext context, INotificationDispatcher dispatcher)
+        {
+            _context = context;
+            _dispatcher = dispatcher;
+        }
 
         // ══════════════════ Subscription Plans ══════════════════
 
@@ -191,6 +197,29 @@ namespace DeliveryApp.API.Controllers
             {
                 _context.RevenueSettlements.AddRange(generated);
                 await _context.SaveChangesAsync();
+
+                // إشعار كل سواق طلع له استحقاق جديد، عشان يبان في اختصار
+                // "المستحقات" في الشاشة الرئيسية بتاعته فورًا
+                var newDriverSettlements = generated.Where(s => s.EntityType == RevenueEntityType.Driver && s.DriverId != null).ToList();
+                if (newDriverSettlements.Any())
+                {
+                    var driverIds = newDriverSettlements.Select(s => s.DriverId!.Value).Distinct().ToList();
+                    var driverUserIds = await _context.Drivers
+                        .Where(d => driverIds.Contains(d.Id))
+                        .Select(d => new { d.Id, d.UserId })
+                        .ToDictionaryAsync(d => d.Id, d => d.UserId);
+
+                    foreach (var settlement in newDriverSettlements)
+                    {
+                        if (!driverUserIds.TryGetValue(settlement.DriverId!.Value, out var driverUserId)) continue;
+
+                        await _dispatcher.NotifyUserAsync(
+                            driverUserId,
+                            "مستحقات جديدة",
+                            $"عليك مستحق جديد بقيمة {settlement.AmountDue:F0} جنيه للفترة من {settlement.PeriodStart:dd/MM} لـ {settlement.PeriodEnd:dd/MM}",
+                            "DriverDue");
+                    }
+                }
             }
 
             // كل الخطط النشطة كانت متخطاة (فترة متقاطعة موجودة بالفعل، أو من غير مبيعات) -
@@ -301,6 +330,25 @@ namespace DeliveryApp.API.Controllers
             if (int.TryParse(adminIdClaim, out var adminId)) settlement.CollectedByAdminId = adminId;
 
             await _context.SaveChangesAsync();
+
+            // إشعار السواق إن الأدمن حصّل (كامل أو جزء من) المستحق بتاعه
+            if (settlement.EntityType == RevenueEntityType.Driver && settlement.DriverId != null)
+            {
+                var driverUserId = await _context.Drivers
+                    .Where(d => d.Id == settlement.DriverId)
+                    .Select(d => d.UserId)
+                    .FirstOrDefaultAsync();
+
+                if (driverUserId != 0)
+                {
+                    var title = settlement.Status == SettlementStatus.Paid ? "تم تحصيل المستحقات" : "تم تسجيل دفعة من مستحقاتك";
+                    var body = settlement.Status == SettlementStatus.Paid
+                        ? $"تم تحصيل مستحقاتك بالكامل بقيمة {settlement.AmountPaid:F0} جنيه"
+                        : $"تم تسجيل {amount:F0} جنيه من مستحقاتك، المتبقي {(settlement.AmountDue - settlement.AmountPaid):F0} جنيه";
+
+                    await _dispatcher.NotifyUserAsync(driverUserId, title, body, "DriverDue");
+                }
+            }
 
             return Ok(new
             {

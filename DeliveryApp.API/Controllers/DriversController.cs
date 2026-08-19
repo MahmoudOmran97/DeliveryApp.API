@@ -1,4 +1,5 @@
 ﻿using DeliveryApp.API.Authorization;
+using DeliveryApp.API.DTOs.Revenue;
 using DeliveryApp.API.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -434,6 +435,82 @@ namespace DeliveryApp.API.Controllers
 
             await _context.SaveChangesAsync();
             return Ok(new { message = "Driver updated successfully" });
+        }
+
+        // ─────────────────────────────────────────────
+        // GET api/drivers/my-dues  — مستحقات السواق للمنصة (اللي بيحصّلها الأدمن)
+        // بيرجع كل السجلات (الأحدث الأول)، الأدمن هو الوحيد اللي يقدر يغيّر
+        // الـ Status (عن طريق /api/revenue/settlements/{id}/mark-paid)
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Driver")]
+        [HttpGet("my-dues")]
+        public async Task<IActionResult> GetMyDues()
+        {
+            var userId = GetUserId();
+            var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
+            if (driver == null) return NotFound(new { message = "Driver profile not found" });
+
+            var dues = await _context.RevenueSettlements
+                .Where(s => s.EntityType == RevenueEntityType.Driver && s.DriverId == driver.Id)
+                .OrderByDescending(s => s.PeriodStart)
+                .Select(s => new DriverDueDto
+                {
+                    Id = s.Id,
+                    PeriodStart = s.PeriodStart,
+                    PeriodEnd = s.PeriodEnd,
+                    OrdersCount = s.OrdersCount,
+                    OrdersTotal = s.OrdersTotal,
+                    AmountDue = s.AmountDue,
+                    AmountPaid = s.AmountPaid,
+                    Status = s.Status.ToString(),
+                    PaidAt = s.PaidAt,
+                    Notes = s.Notes
+                })
+                .ToListAsync();
+
+            return Ok(dues);
+        }
+
+        // ─────────────────────────────────────────────
+        // GET api/drivers/my-dues/summary  — ملخص سريع للاختصار في الشاشة الرئيسية
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Driver")]
+        [HttpGet("my-dues/summary")]
+        public async Task<IActionResult> GetMyDuesSummary()
+        {
+            var userId = GetUserId();
+            var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
+            if (driver == null) return NotFound(new { message = "Driver profile not found" });
+
+            var dues = await _context.RevenueSettlements
+                .Where(s => s.EntityType == RevenueEntityType.Driver && s.DriverId == driver.Id)
+                .OrderByDescending(s => s.PeriodStart)
+                .ToListAsync();
+
+            var pending = dues.Where(s => s.Status != SettlementStatus.Paid).ToList();
+            var latest = dues.FirstOrDefault();
+
+            var summary = new DriverDuesSummaryDto
+            {
+                HasPending = pending.Any(),
+                PendingAmount = pending.Sum(s => s.AmountDue - s.AmountPaid),
+                PendingCount = pending.Count,
+                LatestDue = latest == null ? null : new DriverDueDto
+                {
+                    Id = latest.Id,
+                    PeriodStart = latest.PeriodStart,
+                    PeriodEnd = latest.PeriodEnd,
+                    OrdersCount = latest.OrdersCount,
+                    OrdersTotal = latest.OrdersTotal,
+                    AmountDue = latest.AmountDue,
+                    AmountPaid = latest.AmountPaid,
+                    Status = latest.Status.ToString(),
+                    PaidAt = latest.PaidAt,
+                    Notes = latest.Notes
+                }
+            };
+
+            return Ok(summary);
         }
     }
 
