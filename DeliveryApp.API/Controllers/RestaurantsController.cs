@@ -5,6 +5,7 @@
 // باقي الـ endpoints (GET public) زي ما هي
 
 using DeliveryApp.API.Authorization;
+using DeliveryApp.API.DTOs.Revenue;
 using DeliveryApp.API.Models;
 using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -185,6 +186,81 @@ public class RestaurantsController : ControllerBase
 
         if (restaurant == null) return NotFound(new { message = "Restaurant not found" });
         return Ok(restaurant);
+    }
+
+    // ─────────────────────────────────────────────
+    // GET /api/restaurants/my-dues  — مستحقات صاحب المحل للمنصة (اشتراك/عمولة)
+    // بيرجع كل السجلات (الأحدث الأول)، عرض بس - الأدمن هو الوحيد اللي يقدر
+    // يغيّر الـ Status (عن طريق /api/revenue/settlements/{id}/mark-paid)
+    // نفس فكرة GET /api/drivers/my-dues بالظبط بس للمحل بدل السواق.
+    // ─────────────────────────────────────────────
+    [Authorize(Roles = "Restaurant")]
+    [HttpGet("my-dues")]
+    public async Task<IActionResult> GetMyDues()
+    {
+        var restaurantId = await RestaurantOwnerAuth.GetOwnerRestaurantIdAsync(User, _context);
+        if (restaurantId == null) return NotFound(new { message = "مفيش محل مرتبط بالحساب ده" });
+
+        var dues = await _context.RevenueSettlements
+            .Where(s => s.EntityType == RevenueEntityType.Store && s.RestaurantId == restaurantId.Value)
+            .OrderByDescending(s => s.PeriodStart)
+            .Select(s => new StoreDueDto
+            {
+                Id = s.Id,
+                PeriodStart = s.PeriodStart,
+                PeriodEnd = s.PeriodEnd,
+                OrdersCount = s.OrdersCount,
+                OrdersTotal = s.OrdersTotal,
+                AmountDue = s.AmountDue,
+                AmountPaid = s.AmountPaid,
+                Status = s.Status.ToString(),
+                PaidAt = s.PaidAt,
+                Notes = s.Notes
+            })
+            .ToListAsync();
+
+        return Ok(dues);
+    }
+
+    // ─────────────────────────────────────────────
+    // GET /api/restaurants/my-dues/summary  — ملخص سريع (اختصار في الداشبورد)
+    // ─────────────────────────────────────────────
+    [Authorize(Roles = "Restaurant")]
+    [HttpGet("my-dues/summary")]
+    public async Task<IActionResult> GetMyDuesSummary()
+    {
+        var restaurantId = await RestaurantOwnerAuth.GetOwnerRestaurantIdAsync(User, _context);
+        if (restaurantId == null) return NotFound(new { message = "مفيش محل مرتبط بالحساب ده" });
+
+        var dues = await _context.RevenueSettlements
+            .Where(s => s.EntityType == RevenueEntityType.Store && s.RestaurantId == restaurantId.Value)
+            .OrderByDescending(s => s.PeriodStart)
+            .ToListAsync();
+
+        var pending = dues.Where(s => s.Status != SettlementStatus.Paid).ToList();
+        var latest = dues.FirstOrDefault();
+
+        var summary = new StoreDuesSummaryDto
+        {
+            HasPending = pending.Any(),
+            PendingAmount = pending.Sum(s => s.AmountDue - s.AmountPaid),
+            PendingCount = pending.Count,
+            LatestDue = latest == null ? null : new StoreDueDto
+            {
+                Id = latest.Id,
+                PeriodStart = latest.PeriodStart,
+                PeriodEnd = latest.PeriodEnd,
+                OrdersCount = latest.OrdersCount,
+                OrdersTotal = latest.OrdersTotal,
+                AmountDue = latest.AmountDue,
+                AmountPaid = latest.AmountPaid,
+                Status = latest.Status.ToString(),
+                PaidAt = latest.PaidAt,
+                Notes = latest.Notes
+            }
+        };
+
+        return Ok(summary);
     }
 
     // ─── GET /api/restaurants/{id}  (public) ────────────────────────────────

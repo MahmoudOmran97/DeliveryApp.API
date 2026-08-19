@@ -98,4 +98,33 @@ namespace DeliveryApp.API.DTOs.Revenue
         public int PendingCount { get; set; }
         public DriverDueDto? LatestDue { get; set; }
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // نفس فكرة DriverDueDto/DriverDuesSummaryDto بس لصاحب المحل — بيشوف
+    // بيها الاستحقاقات (الاشتراك/العمولة) اللي عليه للمنصة من غير أي تفاصيل
+    // خاصة بالأدمن (زي CollectedByAdminId)، للعرض بس، مفيش تعديل من عنده.
+    // ─────────────────────────────────────────────────────────────
+    public class StoreDueDto
+    {
+        public int Id { get; set; }
+        public DateTime PeriodStart { get; set; }
+        public DateTime PeriodEnd { get; set; }
+        public int OrdersCount { get; set; }
+        public decimal OrdersTotal { get; set; }
+        public decimal AmountDue { get; set; }
+        public decimal AmountPaid { get; set; }
+        public decimal AmountRemaining => AmountDue - AmountPaid;
+        public string Status { get; set; } = "Unpaid";
+        public DateTime? PaidAt { get; set; }
+        public string? Notes { get; set; }
+    }
+
+    public class StoreDuesSummaryDto
+    {
+        /// <summary>فيه أي استحقاق لسه مش متحصل (Unpaid أو PartiallyPaid)</summary>
+        public bool HasPending { get; set; }
+        public decimal PendingAmount { get; set; }
+        public int PendingCount { get; set; }
+        public StoreDueDto? LatestDue { get; set; }
+    }
 }
