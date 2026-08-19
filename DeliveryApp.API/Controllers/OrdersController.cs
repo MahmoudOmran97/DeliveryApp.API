@@ -755,9 +755,11 @@ namespace DeliveryApp.API.Controllers
 
         // ─────────────────────────────────────────────
         // PUT api/orders/{id}/estimated-time
-        // مراجعة/تعديل الأدمن للرينج المحسوب تلقائي (Min/Max بالدقايق)
+        // مراجعة/تعديل الرينج المحسوب تلقائي (Min/Max بالدقايق)
+        // بيقدر يعدّله الأدمن، أو صاحب المحل بتاع الأوردر ده بالظبط (بيتأكد إن
+        // الأوردر تابع لمحله هو - نفس منطق RestaurantOwnerAuth.CheckOwnerAsync)
         // ─────────────────────────────────────────────
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,Restaurant")]
         [HttpPut("{id}/estimated-time")]
         public async Task<IActionResult> UpdateEstimatedTime(int id, [FromBody] UpdateEstimatedTimeDto dto)
         {
@@ -766,6 +768,12 @@ namespace DeliveryApp.API.Controllers
 
             var order = await _context.Orders.FirstOrDefaultAsync(o => o.Id == id);
             if (order == null) return NotFound();
+
+            if (User.IsInRole("Restaurant") && !User.IsInRole("Admin"))
+            {
+                var ownerError = await RestaurantOwnerAuth.CheckOwnerAsync(User, order.RestaurantId, _context);
+                if (ownerError != null) return ownerError;
+            }
 
             order.EstimatedDeliveryMin = dto.Min;
             order.EstimatedDeliveryMax = dto.Max;
