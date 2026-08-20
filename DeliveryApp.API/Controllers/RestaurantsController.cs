@@ -263,6 +263,35 @@ public class RestaurantsController : ControllerBase
         return Ok(summary);
     }
 
+    // ─── GET /api/restaurants/admin/map  [Admin]  — كل المحلات بالإحداثيات + عدد الطلبات النشطة
+    //     (لخريطة الأدمن الحية: السواقين + المحلات في نفس الشاشة)
+    // ملحوظة: لازم تتحط قبل [HttpGet("{id}")] عشان الراوتنج يفرّق "admin" عن {id}
+    //          (أصلاً ASP.NET Core بيفضّل الـ literal route تلقائي، بس تركناها هنا كمان كتوضيح)
+    [Authorize(Roles = "Admin")]
+    [HttpGet("admin/map")]
+    public async Task<IActionResult> GetForAdminMap()
+    {
+        var activeStatuses = new[] { "Pending", "Accepted", "Preparing", "ReadyForPickup" };
+
+        var restaurants = await _context.Restaurants
+            .Where(r => r.IsActive)
+            .Select(r => new
+            {
+                r.Id,
+                r.Name,
+                r.StoreType,
+                r.Address,
+                r.ImageUrl,
+                r.Latitude,
+                r.Longitude,
+                r.IsOpen,
+                PendingOrders = r.Orders.Count(o => activeStatuses.Contains(o.Status))
+            })
+            .ToListAsync();
+
+        return Ok(restaurants);
+    }
+
     // ─── GET /api/restaurants/{id}  (public) ────────────────────────────────
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(int id, [FromQuery] double? lat, [FromQuery] double? lng)
