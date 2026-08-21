@@ -16,6 +16,7 @@ public static class DeliveryFeeCalculator
     // ── القيم الافتراضية (Fallback) لو حصل أي مشكلة في قراءة الإعدادات من الداتابيز ──
     public const double DefaultFreeRadiusKm = 3.0;
     public const decimal DefaultExtraFeePerKm = 10m;
+    public const double DefaultMaxDeliveryZoneKm = 10.0;
 
     /// <summary>
     /// يجيب إعدادات التوصيل الحالية من الداتابيز (صف واحد بس، Id = 1).
@@ -39,6 +40,19 @@ public static class DeliveryFeeCalculator
         }
 
         return (settings.FreeRadiusKm, settings.ExtraFeePerKm);
+    }
+
+    /// <summary>
+    /// يجيب أقصى مسافة توصيل (الزون) وسبب تقليل الزون لو موجود.
+    /// منفصلة عن GetSettingsAsync عشان الأماكن اللي بتحسب سعر التوصيل بس ملهاش لازمة تحمّل الزون كل مرة.
+    /// </summary>
+    public static async Task<(double MaxDeliveryZoneKm, string? ZoneReducedReason)> GetZoneSettingsAsync(ApplicationDbContext db)
+    {
+        var settings = await db.DeliverySettings.AsNoTracking().OrderBy(s => s.Id).FirstOrDefaultAsync();
+        if (settings == null)
+            return (DefaultMaxDeliveryZoneKm, null);
+
+        return (settings.MaxDeliveryZoneKm, settings.ZoneReducedReason);
     }
 
     /// <summary>

@@ -592,6 +592,20 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] DeliverySettings table check failed: {ex.Message}"); }
 
+    // ── ✅ الجديد: DeliverySettings.MaxDeliveryZoneKm / ZoneReducedReason (زون التوصيل القابل للتعديل) ──
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'DeliverySettings' AND COLUMN_NAME = 'MaxDeliveryZoneKm')
+                ALTER TABLE [dbo].[DeliverySettings] ADD [MaxDeliveryZoneKm] FLOAT NOT NULL DEFAULT 10.0;
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'DeliverySettings' AND COLUMN_NAME = 'ZoneReducedReason')
+                ALTER TABLE [dbo].[DeliverySettings] ADD [ZoneReducedReason] NVARCHAR(300) NULL;
+        ");
+        Console.WriteLine("[Startup] DeliverySettings.MaxDeliveryZoneKm/ZoneReducedReason columns ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] DeliverySettings zone columns check failed: {ex.Message}"); }
+
     // ── ✅ الجديد: Notifications.ActionUrl — توجيه الإشعار لمكان في التطبيق (زي البانرات) ──
     try
     {

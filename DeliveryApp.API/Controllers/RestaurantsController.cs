@@ -98,6 +98,13 @@ public class RestaurantsController : ControllerBase
             ? await DeliveryFeeCalculator.GetSettingsAsync(_context)
             : (DeliveryFeeCalculator.DefaultFreeRadiusKm, DeliveryFeeCalculator.DefaultExtraFeePerKm);
 
+        // ✅ الزون: مهما كان radiusKm اللي بعته الأبلكيشن، السيرفر هو اللي بيفرض السقف
+        // الحقيقي (MaxDeliveryZoneKm) اللي محدده الأدمن، عشان محدش يقدر يتخطى الزون من الكلاينت.
+        var (maxZoneKm, zoneReducedReason) = useLocation
+            ? await DeliveryFeeCalculator.GetZoneSettingsAsync(_context)
+            : (DeliveryFeeCalculator.DefaultMaxDeliveryZoneKm, (string?)null);
+        if (useLocation) radiusKm = Math.Min(radiusKm, maxZoneKm);
+
         var projected = dbList
             .Select(r =>
             {
@@ -144,6 +151,8 @@ public class RestaurantsController : ControllerBase
             page,
             pageSize,
             totalPages = (int)Math.Ceiling(total / (double)pageSize),
+            maxDeliveryZoneKm = maxZoneKm,
+            zoneReducedReason,
             data = paged
         });
     }
@@ -542,6 +551,10 @@ public class RestaurantsController : ControllerBase
     public async Task<IActionResult> GetNearby(
         [FromQuery] double lat, [FromQuery] double lng, [FromQuery] double radiusKm = 10)
     {
+        // ✅ نفس مبدأ الزون: السيرفر بيفرض السقف الحقيقي اللي محدده الأدمن
+        var (maxZoneKm, _) = await DeliveryFeeCalculator.GetZoneSettingsAsync(_context);
+        radiusKm = Math.Min(radiusKm, maxZoneKm);
+
         var restaurants = await _context.Restaurants.Where(r => r.IsActive && r.IsOpen).ToListAsync();
         var nearby = restaurants
             .Select(r => new {
