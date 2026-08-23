@@ -1,5 +1,6 @@
 
 using DeliveryApp.API.Models;
+using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -15,9 +16,16 @@ public class BannersController : ControllerBase
     public BannersController(ApplicationDbContext db) => _db = db;
 
     // GET api/banners  — public, returns active banners sorted by order
+    // ✅ FIX: بيقبل دلوقتي lat/lng/radiusKm. ActionUrl بتاع البانر ممكن يكون
+    // "restaurant/{id}" أو "store/{id}" (زي ما الموبايل بيفكه في OpenBanner) —
+    // لو كان كده، بنستبعد البانر لو المحل ده برا نطاق التوصيل (الزون) الحالي.
+    // بانرات categories أو لينكات خارجية أو من غير ActionUrl بتفضل تظهر دايمًا.
     [HttpGet]
     [AllowAnonymous]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] double? lat,
+        [FromQuery] double? lng,
+        [FromQuery] double radiusKm = 10.0)
     {
         var now = DateTime.UtcNow;
         var banners = await _db.Banners
@@ -37,10 +45,61 @@ public class BannersController : ControllerBase
             })
             .ToListAsync();
 
+        bool useLocation = lat.HasValue && lng.HasValue;
+        if (useLocation && banners.Count > 0)
+        {
+            var (maxZoneKm, _) = await DeliveryFeeCalculator.GetZoneSettingsAsync(_db);
+            radiusKm = Math.Min(radiusKm, maxZoneKm);
+
+            // نلاقط كل الـ restaurantId المذكورة في ActionUrl عشان نجيبهم بضربة واحدة من الداتابيز
+            var restaurantIds = new List<int>();
+            foreach (var b in banners)
+            {
+                if (TryGetRestaurantIdFromActionUrl(b.ActionUrl, out var rid))
+                    restaurantIds.Add(rid);
+            }
+
+            var restaurantLocations = restaurantIds.Count == 0
+                ? new Dictionary<int, (double Latitude, double Longitude)>()
+                : await _db.Restaurants
+                    .Where(r => restaurantIds.Contains(r.Id))
+                    .Select(r => new { r.Id, r.Latitude, r.Longitude })
+                    .ToDictionaryAsync(r => r.Id, r => (r.Latitude, r.Longitude));
+
+            banners = banners
+                .Where(b =>
+                {
+                    if (!TryGetRestaurantIdFromActionUrl(b.ActionUrl, out var rid))
+                        return true; // مش مرتبط بمحل معين → دايمًا يظهر
+
+                    if (!restaurantLocations.TryGetValue(rid, out var loc))
+                        return true; // المحل مش موجود/اتشال → سيبها للموبايل يتعامل معاها (رابط هيفشل بهدوء)
+
+                    return DeliveryFeeCalculator.GetDistanceKm(lat!.Value, lng!.Value, loc.Latitude, loc.Longitude) <= radiusKm;
+                })
+                .ToList();
+        }
+
         return Ok(banners);
     }
 
-    // GET api/banners/admin — كل البانرات (نشطة وغير نشطة) للوحة الإدارة
+    // بيفك ActionUrl بصيغة "restaurant/5" أو "store/5" ويرجع الـ Id
+    private static bool TryGetRestaurantIdFromActionUrl(string? actionUrl, out int restaurantId)
+    {
+        restaurantId = 0;
+        if (string.IsNullOrWhiteSpace(actionUrl)) return false;
+        if (actionUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var parts = actionUrl.Trim().Split('/', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2) return false;
+
+        var type = parts[0].ToLowerInvariant();
+        if (type != "restaurant" && type != "store") return false;
+
+        return int.TryParse(parts[1], out restaurantId);
+    }
+
+    // GET api/banners/admin — كل البانرات (نشطة وغير نشطة) للوحة الإدارة، بدون فلترة زون
     [HttpGet("admin")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> GetAllAdmin()

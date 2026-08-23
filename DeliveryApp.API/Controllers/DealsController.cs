@@ -1,5 +1,6 @@
 
 using DeliveryApp.API.Models;
+using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -15,10 +16,16 @@ public class DealsController : ControllerBase
 
     public DealsController(ApplicationDbContext db) => _db = db;
 
-    // GET api/deals  — returns active deals (for rewards screen)
+    // GET api/deals  — returns active deals (for rewards + home screens)
+    // ✅ FIX: بيقبل دلوقتي lat/lng/radiusKm زي /api/restaurants بالظبط، وبيفلتر
+    // العروض المرتبطة بمحل (RestaurantId) بحيث ميظهرش عرض لمحل برا نطاق التوصيل
+    // (الزون) الحالي بتاع العميل. العروض العامة (RestaurantId == null) بتفضل تظهر دايمًا.
     [HttpGet]
     [AllowAnonymous]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll(
+        [FromQuery] double? lat,
+        [FromQuery] double? lng,
+        [FromQuery] double radiusKm = 10.0)
     {
         var now = DateTime.UtcNow;
         var deals = await _db.Deals
@@ -41,6 +48,9 @@ public class DealsController : ControllerBase
                 RestaurantImage = d.Restaurant != null && d.Restaurant.ImageUrl != null
                     ? (d.Restaurant.ImageUrl.StartsWith("http") ? d.Restaurant.ImageUrl : ImgBase + "/" + d.Restaurant.ImageUrl.TrimStart('/'))
                     : null,
+                RestaurantLatitude = d.Restaurant != null ? d.Restaurant.Latitude : (double?)null,
+                RestaurantLongitude = d.Restaurant != null ? d.Restaurant.Longitude : (double?)null,
+                RestaurantIsActive = d.Restaurant != null ? d.Restaurant.IsActive : true,
                 d.ProductId,
                 ProductName = d.Product != null ? d.Product.Name : null,
                 d.OriginalPrice,
@@ -53,10 +63,52 @@ public class DealsController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(deals);
+        // ── فلترة الزون (نفس منطق /api/restaurants بالظبط) ──────────────────────
+        bool useLocation = lat.HasValue && lng.HasValue;
+        if (useLocation)
+        {
+            var (maxZoneKm, _) = await DeliveryFeeCalculator.GetZoneSettingsAsync(_db);
+            radiusKm = Math.Min(radiusKm, maxZoneKm);
+
+            deals = deals
+                .Where(d =>
+                    // عرض عام (مش مرتبط بمحل) → يفضل يظهر دايمًا
+                    !d.RestaurantId.HasValue
+                    // محل اتقفل/اتشال ← منستبعدوش هنا (شغل الـ IsActive على مستوى العرض نفسه فوق)
+                    || !d.RestaurantLatitude.HasValue || !d.RestaurantLongitude.HasValue
+                    // أو المحل جوه نطاق التوصيل الحالي
+                    || DeliveryFeeCalculator.GetDistanceKm(
+                           lat!.Value, lng!.Value,
+                           d.RestaurantLatitude.Value, d.RestaurantLongitude.Value) <= radiusKm)
+                .ToList();
+        }
+
+        // ما نرجعش إحداثيات المحل للكلاينت، مش محتاجها هناك
+        var result = deals.Select(d => new
+        {
+            d.Id,
+            d.Title,
+            d.Description,
+            d.ImageUrl,
+            d.RestaurantId,
+            d.RestaurantName,
+            d.RestaurantImage,
+            d.ProductId,
+            d.ProductName,
+            d.OriginalPrice,
+            d.DiscountedPrice,
+            d.DiscountPercent,
+            d.BadgeText,
+            d.BadgeColor,
+            d.ExpiresAt,
+            d.SortOrder
+        });
+
+        return Ok(result);
     }
 
     // GET api/deals/admin — كل العروض (نشطة وغير نشطة ومنتهية) للوحة الإدارة
+    // بدون فلترة زون عمدًا: الأدمن لازم يشوف ويدير كل العروض بغض النظر عن موقع أي حد.
     [HttpGet("admin")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> GetAllAdmin()
@@ -92,7 +144,7 @@ public class DealsController : ControllerBase
         return Ok(deals);
     }
 
-    // GET api/deals/by-restaurant/{restaurantId}
+    // GET api/deals/by-restaurant/{restaurantId}  — العميل أصلاً فاتح المحل ده، فمفيش لازمة لفلترة زون هنا
     [HttpGet("by-restaurant/{restaurantId}")]
     [AllowAnonymous]
     public async Task<IActionResult> GetByRestaurant(int restaurantId)
