@@ -67,6 +67,11 @@ public class CouponsController : ControllerBase
         if (coupon.OwnerUserId.HasValue && coupon.OwnerUserId.Value != userId)
             return BadRequest(new { message = "هذا الكوبون غير متاح لحسابك" });
 
+        // ✅ FIX: الكوبون المحدد على محل معين (RestaurantId) كان بيتقبل مع أي محل تاني
+        // لأن الـ Validate ماكانش بيقارن RestaurantId بتاع الكوبون بمحل الطلب الحالي.
+        if (coupon.RestaurantId.HasValue && coupon.RestaurantId.Value != req.RestaurantId)
+            return BadRequest(new { message = "هذا الكوبون غير متاح لهذا المطعم" });
+
         if (coupon.ExpiresAt.HasValue && coupon.ExpiresAt < now)
             return BadRequest(new { message = "عذراً، هذا الكوبون انتهت صلاحيته" });
 
@@ -114,6 +119,7 @@ public class CouponsController : ControllerBase
         var allCoupons = await _db.Coupons
             // ✅ يشوف الكوبونات العامة + كوبوناته الخاصة بس، مش كل حد كوبوناته الخاصة
             .Where(c => c.IsActive && (c.OwnerUserId == null || c.OwnerUserId == userId))
+            .Include(c => c.Restaurant)
             .ToListAsync();
         var usedCouponIds = await _db.UserCoupons.Where(uc => uc.UserId == userId).Select(uc => uc.CouponId).ToListAsync();
 
@@ -127,6 +133,9 @@ public class CouponsController : ControllerBase
             c.DiscountValue,
             c.MinOrderAmount,
             c.MaxDiscount,
+            // ✅ عشان العميل يعرف الكوبون خاص بمحل معين ولا شغال على كل المحلات
+            c.RestaurantId,
+            RestaurantName = c.Restaurant != null ? c.Restaurant.Name : null,
             c.ExpiresAt,
             Status = usedCouponIds.Contains(c.Id) ? "Used" : 
                      (c.ExpiresAt.HasValue && c.ExpiresAt < now) ? "Expired" : "Available",
@@ -222,4 +231,6 @@ public class ValidateCouponRequest
 {
     public string Code { get; set; } = string.Empty;
     public decimal OrderAmount { get; set; }
+    // ✅ لازم نبعت محل الطلب الحالي عشان نتأكد إن الكوبون (لو مقيّد بمحل معين) بيخص نفس المحل
+    public int? RestaurantId { get; set; }
 }

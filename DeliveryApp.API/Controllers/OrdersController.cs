@@ -154,6 +154,11 @@ namespace DeliveryApp.API.Controllers
                 else if (!string.IsNullOrWhiteSpace(dto.CouponCode))
                     appliedCoupon = await _context.Coupons.FirstOrDefaultAsync(c => c.Code == dto.CouponCode.ToUpper());
 
+                // ✅ FIX: لازم نتأكد إن الكوبون (لو مقيّد بمحل معين عبر RestaurantId) بيخص
+                // نفس محل الطلب الحالي، وإلا الخصم يتطبق حتى مع محلات تانية غلط.
+                if (appliedCoupon != null && appliedCoupon.RestaurantId.HasValue && appliedCoupon.RestaurantId.Value != restaurant.Id)
+                    appliedCoupon = null;
+
                 if (appliedCoupon != null && appliedCoupon.IsActive && (appliedCoupon.ExpiresAt == null || appliedCoupon.ExpiresAt > DateTime.UtcNow))
                 {
                     // منع إعادة استخدام الكوبون من نفس المستخدم
