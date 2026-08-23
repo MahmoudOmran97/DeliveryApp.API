@@ -54,8 +54,63 @@ public class AiSupportService : IAiSupportService
             type = "function",
             function = new
             {
+                name = "get_customer_orders",
+                description = "هات آخر أوردرات العميل (رقم الأوردر، اسم المحل، الحالة، الإجمالي، والتاريخ). استخدمها الأول لما العميل يسأل عن أوردر من غير ما يديك رقمه (زي \"فين أوردري\" أو \"طلبي اتأخر\") عشان تعرف تحدد هو بيقصد أوردر رقم كام.",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        onlyActive = new { type = "boolean", description = "لو true هات بس الأوردرات اللي لسه شغالة (مش Delivered ولا Cancelled ولا Rejected). افتراضي false يعني هات آخر الأوردرات كلها." }
+                    },
+                    required = Array.Empty<string>()
+                }
+            }
+        },
+        new
+        {
+            type = "function",
+            function = new
+            {
+                name = "track_order",
+                description = "هات تفاصيل وحالة أوردر معين بالظبط (رقمه، حالته الحالية، اسم المحل، اسم وتليفون السائق لو اتعين، والوقت المتوقع للتوصيل). استخدمها لما يبقى معاك رقم الأوردر (من العميل أو من get_customer_orders) وعايز تعرف آخر تحديث عليه.",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        orderId = new { type = "integer", description = "رقم الأوردر المطلوب تتبعه" }
+                    },
+                    required = new[] { "orderId" }
+                }
+            }
+        },
+        new
+        {
+            type = "function",
+            function = new
+            {
+                name = "cancel_order",
+                description = "ألغي أوردر العميل فعليًا. بينفع بس للأوردرات لسه في حالة Pending (لسه ماتقبلش) أو Accepted (اتقبل بس لسه ما دخلش التحضير). لو الأوردر بعد كده (Preparing أو ReadyForPickup أو OnTheWay أو Delivered) الإلغاء هيترفض تلقائيًا، وفي الحالة دي اقترح على العميل إنه يعمل شكوى (create_complaint) أو التحويل لأدمن بدل ما تحاول تاني.",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        orderId = new { type = "integer", description = "رقم الأوردر المطلوب إلغاؤه" },
+                        reason = new { type = "string", description = "سبب الإلغاء زي ما قاله العميل" }
+                    },
+                    required = new[] { "orderId" }
+                }
+            }
+        },
+        new
+        {
+            type = "function",
+            function = new
+            {
                 name = "create_complaint",
-                description = "سجّل شكوى رسمية للعميل عن مشكلة حقيقية ذكرها (طلب متأخر، منتج فاسد أو ناقص، مندوب أساء التعامل، خصم غلط، إلخ). استخدمها لما تكون متأكد إن العميل بيشتكي فعلاً مش بس بيسأل سؤال عادي.",
+                description = "سجّل شكوى رسمية للعميل عن مشكلة حقيقية ذكرها (طلب متأخر، منتج فاسد أو ناقص، طلب استرجاع/استبدال منتج بعد التوصيل، مندوب أساء التعامل، خصم غلط، إلخ). دي نفس الطريقة اللي بيتسجل بيها طلب الاسترجاع (Return) لأن مفيش نظام استرجاع منفصل — الأدمن بيراجع الشكوى ويقرر الاسترداد. استخدمها لما تكون متأكد إن العميل بيشتكي أو عايز يسترجع فعلاً مش بس بيسأل سؤال عادي.",
                 parameters = new
                 {
                     type = "object",
@@ -129,9 +184,10 @@ public class AiSupportService : IAiSupportService
         var client = _httpFactory.CreateClient();
         var result = new AiReplyResult();
 
-        // أقصى حاجة دورتين: الأولى ممكن ترجع tool_calls، والتانية بترجع الرد النهائي
-        // بعد ما ننفذ الأداة ونبعتلها نتيجتها كرسالة role=tool.
-        for (int round = 0; round < 2; round++)
+        // أقصى 4 دورات: دلوقتي في أدوات ممكن تتسلسل (مثلاً get_customer_orders
+        // عشان يعرف رقم الأوردر، وبعدين track_order أو cancel_order بيه)، فمحتاجين
+        // مساحة أكبر من دورتين عشان الـ AI يقدر يستخدم أكتر من أداة قبل الرد النهائي.
+        for (int round = 0; round < 4; round++)
         {
             var body = new Dictionary<string, object>
             {
@@ -212,6 +268,104 @@ public class AiSupportService : IAiSupportService
                 string toolResultText;
                 switch (name)
                 {
+                    case "get_customer_orders":
+                        {
+                            var onlyActive = args.ValueKind == JsonValueKind.Object &&
+                                args.TryGetProperty("onlyActive", out var oa) && oa.ValueKind == JsonValueKind.True;
+
+                            var activeStatuses = new[] { "Pending", "Accepted", "Preparing", "ReadyForPickup", "OnTheWay" };
+
+                            var ordersQuery = _context.Orders
+                                .Where(o => o.CustomerId == customer.Id);
+
+                            if (onlyActive)
+                                ordersQuery = ordersQuery.Where(o => activeStatuses.Contains(o.Status));
+
+                            var orders = await ordersQuery
+                                .OrderByDescending(o => o.CreatedAt)
+                                .Take(10)
+                                .Select(o => new
+                                {
+                                    o.Id,
+                                    Store = o.Restaurant.Name,
+                                    o.Status,
+                                    o.TotalAmount,
+                                    CreatedAt = o.CreatedAt
+                                })
+                                .ToListAsync();
+
+                            toolResultText = orders.Count == 0
+                                ? "العميل مفيش عنده أي أوردرات."
+                                : JsonSerializer.Serialize(orders);
+                            break;
+                        }
+                    case "track_order":
+                        {
+                            var trackOrderId = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("orderId", out var toId) && toId.ValueKind == JsonValueKind.Number
+                                ? toId.GetInt32() : (int?)null;
+
+                            if (trackOrderId == null)
+                            { toolResultText = "رقم الأوردر مطلوب."; break; }
+
+                            var trackedOrder = await _context.Orders
+                                .Where(o => o.Id == trackOrderId && o.CustomerId == customer.Id)
+                                .Select(o => new
+                                {
+                                    o.Id,
+                                    Store = o.Restaurant.Name,
+                                    o.Status,
+                                    o.TotalAmount,
+                                    o.EstimatedDeliveryMin,
+                                    o.EstimatedDeliveryMax,
+                                    DriverName = o.Driver != null ? o.Driver.User.FullName : null,
+                                    DriverPhone = o.Driver != null ? o.Driver.User.Phone : null,
+                                    o.CreatedAt,
+                                    o.AcceptedAt,
+                                    o.PickedUpAt,
+                                    o.DeliveredAt,
+                                    o.CancellationReason
+                                })
+                                .FirstOrDefaultAsync();
+
+                            toolResultText = trackedOrder == null
+                                ? "مفيش أوردر بالرقم ده لنفس العميل ده."
+                                : JsonSerializer.Serialize(trackedOrder);
+                            break;
+                        }
+                    case "cancel_order":
+                        {
+                            var cancelOrderId = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("orderId", out var coId) && coId.ValueKind == JsonValueKind.Number
+                                ? coId.GetInt32() : (int?)null;
+                            var cancelReason = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("reason", out var cr) ? cr.GetString() : null;
+
+                            if (cancelOrderId == null)
+                            { toolResultText = "رقم الأوردر مطلوب."; break; }
+
+                            var orderToCancel = await _context.Orders
+                                .FirstOrDefaultAsync(o => o.Id == cancelOrderId && o.CustomerId == customer.Id);
+
+                            if (orderToCancel == null)
+                            { toolResultText = "مفيش أوردر بالرقم ده لنفس العميل ده."; break; }
+
+                            if (!new[] { "Pending", "Accepted" }.Contains(orderToCancel.Status))
+                            {
+                                toolResultText = $"معذرة، مينفعش نلغي الأوردر ده — حالته دلوقتي \"{orderToCancel.Status}\" وده متأخر عن مرحلة الإلغاء. اقترح على العميل يعمل شكوى أو التحويل لأدمن.";
+                                break;
+                            }
+
+                            orderToCancel.Status = "Cancelled";
+                            orderToCancel.CancellationReason = string.IsNullOrWhiteSpace(cancelReason) ? "ألغاه العميل عن طريق المساعد الذكي" : cancelReason;
+                            await _context.SaveChangesAsync();
+
+                            var lang = NotificationLocalizer.NormalizeLang(language);
+                            var cancelNotif = NotificationLocalizer.StatusUpdate(lang, "Cancelled");
+                            await _dispatcher.NotifyUserAsync(customer.Id, cancelNotif.Title, cancelNotif.Body,
+                                "OrderCancelled", orderToCancel.Id);
+                            await _hub.NotifyOrderStatusChanged(orderToCancel.Id, "Cancelled");
+
+                            toolResultText = $"تم إلغاء الأوردر رقم {orderToCancel.Id} بنجاح.";
+                            break;
+                        }
                     case "create_complaint":
                         {
                             var subject = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("subject", out var s) ? s.GetString() ?? "شكوى بدون عنوان" : "شكوى بدون عنوان";
