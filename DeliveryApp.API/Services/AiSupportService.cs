@@ -466,7 +466,9 @@ public class AiSupportService : IAiSupportService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("AI support (Gemini): رجع {Status} — {Body}", response.StatusCode, responseBody);
-                result.ReplyText = "⚠️ في مشكلة في المساعد الذكي دلوقتي، جرب تاني كمان شوية أو اطلب التحويل لأدمن.";
+                result.ReplyText = response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                    ? "⚠️ المساعد الذكي وصل للحد الأقصى من الطلبات المسموح بيه دلوقتي، جرب تاني بعد شوية أو اطلب التحويل لأدمن."
+                    : "⚠️ في مشكلة في المساعد الذكي دلوقتي، جرب تاني كمان شوية أو اطلب التحويل لأدمن.";
                 return result;
             }
 
