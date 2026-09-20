@@ -482,6 +482,8 @@ namespace DeliveryApp.API.Controllers
                     o.AcceptedAt,
                     o.PickedUpAt,
                     o.DeliveredAt,
+                    // ✅ اسم العميل — تطبيق الدريفر بيعتمد عليه لما يفتح صفحة الطلب من القايمة
+                    CustomerName = o.Customer.FullName,
                     Restaurant = new { o.Restaurant.Id, o.Restaurant.Name, o.Restaurant.ImageUrl, o.Restaurant.Phone, o.Restaurant.Latitude, o.Restaurant.Longitude },
                     Driver = o.Driver == null ? null : new
                     {
@@ -940,6 +942,10 @@ namespace DeliveryApp.API.Controllers
             var userId = GetUserId();
             var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
 
+            // ✅ الدريفر لازم يكون أونلاين عشان يشوف الطلبات المتاحة
+            if (driver == null || !driver.IsOnline)
+                return Ok(Array.Empty<object>());
+
             // إحداثيات الدريفر الحالية (لازم يكون بعت آخر لوكيشن ليه)
             double? driverLat = driver?.CurrentLatitude;
             double? driverLng = driver?.CurrentLongitude;
@@ -1011,6 +1017,10 @@ namespace DeliveryApp.API.Controllers
             var userId = GetUserId();
             var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
             if (driver == null) return Forbid();
+
+            // ✅ لازم يكون أونلاين عشان يقبل طلب
+            if (!driver.IsOnline)
+                return BadRequest(new { message = "You must be online to accept orders." });
 
             // الدريفر ميقدرش ياخد طلب جديد لو لسة معاه طلب شغال (لم يتسلم لحد دلوقتي)
             var hasActiveOrder = await _context.Orders.AnyAsync(o =>
