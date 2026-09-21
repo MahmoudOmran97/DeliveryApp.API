@@ -35,5 +35,12 @@ public class DeliverySettings
     [MaxLength(300)]
     public string? ZoneReducedReason { get; set; }
 
+    /// <summary>
+    /// نطاق ظهور الطلبات المتاحة للسائق (بالكيلومتر): السائق بيشوف بس الطلبات اللي المحل بتاعها
+    /// على بُعد أقل من أو يساوي المسافة دي من موقعه الحالي. الأدمن هو اللي بيتحكم فيها.
+    /// القيمة الافتراضية 1 كم (نفس السلوك القديم لما كانت ثابتة في الكود).
+    /// </summary>
+    public double DriverOrdersRadiusKm { get; set; } = 1.0;
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -606,6 +606,18 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] DeliverySettings zone columns check failed: {ex.Message}"); }
 
+    // ── ✅ الجديد: DeliverySettings.DriverOrdersRadiusKm (نطاق الطلبات المتاحة للسائق، قابل للتعديل من الأدمن) ──
+    // الصفوف الموجودة بتاخد DEFAULT 1.0 يعني نفس السلوك القديم (1 كم) لحد ما الأدمن يغيّرها.
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'DeliverySettings' AND COLUMN_NAME = 'DriverOrdersRadiusKm')
+                ALTER TABLE [dbo].[DeliverySettings] ADD [DriverOrdersRadiusKm] FLOAT NOT NULL DEFAULT 1.0;
+        ");
+        Console.WriteLine("[Startup] DeliverySettings.DriverOrdersRadiusKm column ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] DeliverySettings driver radius column check failed: {ex.Message}"); }
+
     // ── ✅ الجديد: Notifications.ActionUrl — توجيه الإشعار لمكان في التطبيق (زي البانرات) ──
     try
     {

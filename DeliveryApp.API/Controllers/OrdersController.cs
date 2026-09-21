@@ -950,6 +950,9 @@ namespace DeliveryApp.API.Controllers
             double? driverLat = driver?.CurrentLatitude;
             double? driverLng = driver?.CurrentLongitude;
 
+            // ✅ نطاق ظهور الطلبات للسائق — الأدمن هو اللي بيتحكم فيه من إعدادات التوصيل (الافتراضي 1 كم)
+            var driverRadiusKm = await GetDriverOrdersRadiusKmAsync();
+
             var raw = await _context.Orders
                 .Where(o => new[] { "Preparing", "ReadyForPickup" }.Contains(o.Status) && o.DriverId == null)
                 .Select(o => new
@@ -998,13 +1001,108 @@ namespace DeliveryApp.API.Controllers
                     : null
             });
 
-            // نعرض بس المحلات القريبة من الدريفر بمسافة 1 كيلومتر أو أقل.
+            // نعرض بس المحلات القريبة من الدريفر في حدود driverRadiusKm (من إعدادات الأدمن).
             // لو مفيش لوكيشن للدريفر أصلاً، نرجّع كل الطلبات بدون فلترة عشان ميظهرش الاستريم فاضي.
             var filtered = (driverLat.HasValue && driverLng.HasValue)
-                ? withDistance.Where(o => o.DistanceKm.HasValue && o.DistanceKm.Value <= 1.0)
+                ? withDistance.Where(o => o.DistanceKm.HasValue && o.DistanceKm.Value <= driverRadiusKm)
                 : withDistance;
 
             return Ok(filtered.OrderByDescending(o => o.CreatedAt).ToList());
+        }
+
+        // ─────────────────────────────────────────────
+        // GET api/orders/available/{id}
+        // تفاصيل طلب متاح كاملة قبل ما الدريفر يقبله (من غير بيانات العميل الشخصية)
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Driver")]
+        [HttpGet("available/{id:int}")]
+        public async Task<IActionResult> GetAvailableOrderDetails(int id)
+        {
+            var userId = GetUserId();
+            var driver = await _context.Drivers.AsNoTracking().FirstOrDefaultAsync(d => d.UserId == userId);
+            if (driver == null || !driver.IsOnline)
+                return BadRequest(new { message = "You must be online to view available orders." });
+
+            // لازم لسه متاح: لسه Preparing/ReadyForPickup ومحدش أخده
+            var order = await _context.Orders.AsNoTracking()
+                .Where(o => o.Id == id
+                            && new[] { "Preparing", "ReadyForPickup" }.Contains(o.Status)
+                            && o.DriverId == null)
+                .Select(o => new
+                {
+                    o.Id,
+                    o.Status,
+                    o.SubTotal,
+                    o.DeliveryFee,
+                    o.Discount,
+                    o.TotalAmount,
+                    o.PaymentMethod,
+                    o.DeliveryAddress,
+                    o.DeliveryLatitude,
+                    o.DeliveryLongitude,
+                    o.DeliveryNotes,
+                    o.EstimatedDeliveryMin,
+                    o.EstimatedDeliveryMax,
+                    o.CreatedAt,
+                    RestaurantName = o.Restaurant.Name,
+                    RestaurantAddress = o.Restaurant.Address,
+                    RestaurantLat = o.Restaurant.Latitude,
+                    RestaurantLng = o.Restaurant.Longitude,
+                    Items = o.OrderItems.Select(i => new
+                    {
+                        ProductName = i.Product.Name,
+                        i.Quantity,
+                        i.UnitPrice,
+                        i.TotalPrice,
+                        i.Notes
+                    })
+                })
+                .FirstOrDefaultAsync();
+
+            if (order == null)
+                return NotFound(new { message = "Order not available" });
+
+            // المسافة بين موقع الدريفر الحالي والمحل (نفس معادلة قايمة الطلبات المتاحة)
+            double? distanceKm = (driver.CurrentLatitude.HasValue && driver.CurrentLongitude.HasValue)
+                ? 111.045 * Math.Sqrt(
+                    Math.Pow(driver.CurrentLatitude.Value - order.RestaurantLat, 2) +
+                    Math.Pow((driver.CurrentLongitude.Value - order.RestaurantLng) * Math.Cos(order.RestaurantLat * Math.PI / 180.0), 2))
+                : null;
+
+            return Ok(new
+            {
+                order.Id,
+                order.Status,
+                order.SubTotal,
+                order.DeliveryFee,
+                order.Discount,
+                order.TotalAmount,
+                order.PaymentMethod,
+                order.DeliveryAddress,
+                order.DeliveryLatitude,
+                order.DeliveryLongitude,
+                order.DeliveryNotes,
+                order.EstimatedDeliveryMin,
+                order.EstimatedDeliveryMax,
+                order.CreatedAt,
+                order.RestaurantName,
+                order.RestaurantAddress,
+                order.RestaurantLat,
+                order.RestaurantLng,
+                DistanceKm = distanceKm,
+                order.Items
+            });
+        }
+
+        // نطاق ظهور الطلبات المتاحة للسائق من إعدادات التوصيل؛ لو الصف مش موجود نرجع الافتراضي (1 كم)
+        private async Task<double> GetDriverOrdersRadiusKmAsync()
+        {
+            var radius = await _context.DeliverySettings.AsNoTracking()
+                .OrderBy(s => s.Id)
+                .Select(s => (double?)s.DriverOrdersRadiusKm)
+                .FirstOrDefaultAsync();
+
+            return radius is > 0 ? radius.Value : 1.0;
         }
 
         // ─────────────────────────────────────────────

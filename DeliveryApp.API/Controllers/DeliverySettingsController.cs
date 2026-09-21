@@ -34,6 +34,7 @@ public class DeliverySettingsController : ControllerBase
             settings.ExtraFeePerKm,
             settings.MaxDeliveryZoneKm,
             settings.ZoneReducedReason,
+            settings.DriverOrdersRadiusKm,
             settings.UpdatedAt
         });
     }
@@ -51,6 +52,8 @@ public class DeliverySettingsController : ControllerBase
             return BadRequest(new { message = "MaxDeliveryZoneKm must be > 0" });
         if (dto.ZoneReducedReason != null && dto.ZoneReducedReason.Length > 300)
             return BadRequest(new { message = "ZoneReducedReason must be 300 characters or less" });
+        if (dto.DriverOrdersRadiusKm.HasValue && dto.DriverOrdersRadiusKm.Value <= 0)
+            return BadRequest(new { message = "DriverOrdersRadiusKm must be > 0" });
 
         var settings = await _context.DeliverySettings.OrderBy(s => s.Id).FirstOrDefaultAsync();
         if (settings == null)
@@ -64,6 +67,9 @@ public class DeliverySettingsController : ControllerBase
         settings.MaxDeliveryZoneKm = dto.MaxDeliveryZoneKm;
         // NullOrWhiteSpace بيتحفظ null عشان الأبلكيشن يعرف يعرض الرسالة الافتراضية بدل نص فاضي
         settings.ZoneReducedReason = string.IsNullOrWhiteSpace(dto.ZoneReducedReason) ? null : dto.ZoneReducedReason.Trim();
+        // nullable عشان لو لوحة أدمن قديمة مبعتتش الحقل ده، منرجّعش القيمة لـ 1 كم بالغلط
+        if (dto.DriverOrdersRadiusKm.HasValue)
+            settings.DriverOrdersRadiusKm = dto.DriverOrdersRadiusKm.Value;
         settings.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
@@ -76,6 +82,7 @@ public class DeliverySettingsController : ControllerBase
             settings.ExtraFeePerKm,
             settings.MaxDeliveryZoneKm,
             settings.ZoneReducedReason,
+            settings.DriverOrdersRadiusKm,
             settings.UpdatedAt
         });
     }
@@ -87,4 +94,5 @@ public class UpdateDeliverySettingsDto
     public decimal ExtraFeePerKm { get; set; }
     public double MaxDeliveryZoneKm { get; set; } = 10.0;
     public string? ZoneReducedReason { get; set; }
+    public double? DriverOrdersRadiusKm { get; set; }
 }
