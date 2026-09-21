@@ -977,6 +977,8 @@ namespace DeliveryApp.API.Controllers
                 .ToListAsync();
 
             // نحسب المسافة بين موقع الدريفر الحالي والمحل (مش بين المحل وعنوان التوصيل)
+            // ✅ بنرجّع الطلبات كلها من غير فلترة بالمسافة، وبنضيف CanAccept عشان الكلاينت يعرف
+            // هو مسموح له يقبل الطلب ده ولا لأ (الطلبات البعيدة تفضل ظاهرة بس الزر يتقفل).
             var withDistance = raw.Select(o => new
             {
                 o.Id,
@@ -999,15 +1001,29 @@ namespace DeliveryApp.API.Controllers
                         Math.Pow(driverLat.Value - o.RestaurantLat, 2) +
                         Math.Pow((driverLng.Value - o.RestaurantLng) * Math.Cos(o.RestaurantLat * Math.PI / 180.0), 2)))
                     : null
+            }).Select(o => new
+            {
+                o.Id,
+                o.TotalAmount,
+                o.DeliveryFee,
+                o.DeliveryAddress,
+                o.DeliveryLatitude,
+                o.DeliveryLongitude,
+                o.CreatedAt,
+                o.Status,
+                o.EstimatedDeliveryMin,
+                o.EstimatedDeliveryMax,
+                o.RestaurantName,
+                o.RestaurantAddress,
+                o.RestaurantLat,
+                o.RestaurantLng,
+                o.ItemCount,
+                o.DistanceKm,
+                // لو مفيش لوكيشن للدريفر، منقدرش نحسب المسافة فنسيبه يقبل عادي (نفس السلوك القديم)
+                CanAccept = !o.DistanceKm.HasValue || o.DistanceKm.Value <= driverRadiusKm
             });
 
-            // نعرض بس المحلات القريبة من الدريفر في حدود driverRadiusKm (من إعدادات الأدمن).
-            // لو مفيش لوكيشن للدريفر أصلاً، نرجّع كل الطلبات بدون فلترة عشان ميظهرش الاستريم فاضي.
-            var filtered = (driverLat.HasValue && driverLng.HasValue)
-                ? withDistance.Where(o => o.DistanceKm.HasValue && o.DistanceKm.Value <= driverRadiusKm)
-                : withDistance;
-
-            return Ok(filtered.OrderByDescending(o => o.CreatedAt).ToList());
+            return Ok(withDistance.OrderByDescending(o => o.CreatedAt).ToList());
         }
 
         // ─────────────────────────────────────────────
@@ -1062,12 +1078,21 @@ namespace DeliveryApp.API.Controllers
             if (order == null)
                 return NotFound(new { message = "Order not available" });
 
+            var driverRadiusKm = await GetDriverOrdersRadiusKmAsync();
+
             // المسافة بين موقع الدريفر الحالي والمحل (نفس معادلة قايمة الطلبات المتاحة)
             double? distanceKm = (driver.CurrentLatitude.HasValue && driver.CurrentLongitude.HasValue)
                 ? 111.045 * Math.Sqrt(
                     Math.Pow(driver.CurrentLatitude.Value - order.RestaurantLat, 2) +
                     Math.Pow((driver.CurrentLongitude.Value - order.RestaurantLng) * Math.Cos(order.RestaurantLat * Math.PI / 180.0), 2))
                 : null;
+
+            // ✅ المسافة بين المحل وعنوان العميل (مش بين الدريفر والمحل) — عشان الدريفر يشوفها في التفاصيل قبل القبول
+            double restaurantToCustomerDistanceKm = 111.045 * Math.Sqrt(
+                Math.Pow(order.RestaurantLat - order.DeliveryLatitude, 2) +
+                Math.Pow((order.RestaurantLng - order.DeliveryLongitude) * Math.Cos(order.RestaurantLat * Math.PI / 180.0), 2));
+
+            var canAccept = !distanceKm.HasValue || distanceKm.Value <= driverRadiusKm;
 
             return Ok(new
             {
@@ -1090,6 +1115,8 @@ namespace DeliveryApp.API.Controllers
                 order.RestaurantLat,
                 order.RestaurantLng,
                 DistanceKm = distanceKm,
+                RestaurantToCustomerDistanceKm = restaurantToCustomerDistanceKm,
+                CanAccept = canAccept,
                 order.Items
             });
         }
@@ -1127,10 +1154,22 @@ namespace DeliveryApp.API.Controllers
             if (hasActiveOrder)
                 return BadRequest(new { message = "You already have an active order. Deliver it before accepting a new one." });
 
-            var order = await _context.Orders
+            var order = await _context.Orders.Include(o => o.Restaurant)
                 .FirstOrDefaultAsync(o => o.Id == id && new[] { "Preparing", "ReadyForPickup" }.Contains(o.Status) && o.DriverId == null);
             if (order == null)
                 return BadRequest(new { message = "Order not available" });
+
+            // ✅ نتأكد سيرفر-سايد إن الطلب فعلاً جوه نطاق الدريفر (مش بس اعتماد على فلترة الكلاينت)
+            if (driver.CurrentLatitude.HasValue && driver.CurrentLongitude.HasValue)
+            {
+                var driverRadiusKm = await GetDriverOrdersRadiusKmAsync();
+                var distanceKm = 111.045 * Math.Sqrt(
+                    Math.Pow(driver.CurrentLatitude.Value - order.Restaurant.Latitude, 2) +
+                    Math.Pow((driver.CurrentLongitude.Value - order.Restaurant.Longitude) * Math.Cos(order.Restaurant.Latitude * Math.PI / 180.0), 2));
+
+                if (distanceKm > driverRadiusKm)
+                    return BadRequest(new { message = "This order is outside your delivery range." });
+            }
 
             order.DriverId = driver.Id;
             await _context.SaveChangesAsync();
