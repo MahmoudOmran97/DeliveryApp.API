@@ -22,6 +22,9 @@ builder.Services.AddHttpClient("cloudinary");
 builder.Services.AddScoped<IImageStorageService, CloudinaryStorageService>();
 builder.Services.AddScoped<IPointsService, PointsService>();
 
+// ✅ نظام استنتاج المناطق (Zones) من إحداثيات المحلات — لفلتر "المنطقة" في تطبيق الدريفر
+builder.Services.AddScoped<IRestaurantZoneService, RestaurantZoneService>();
+
 // ✅ الجديد: خدمات الـ OTP (إرسال إيميل + توليد/تحقق الكود)
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IOtpService, OtpService>();

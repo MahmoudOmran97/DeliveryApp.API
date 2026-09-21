@@ -25,6 +25,15 @@ public static class NotificationLocalizer
             : ("🛍️ New Order!", $"You received a new order #{orderId}");
     }
 
+    // ✅ الدريفر بيدوس على زرار "أبلغ العميل إني قربت أوصل" بعد ما يستلم الطلب من المحل (OnTheWay)
+    public static (string Title, string Body) DriverNearby(string? lang)
+    {
+        lang = NormalizeLang(lang);
+        return lang == "ar"
+            ? ("السائق قريب منك! 🛵", "طلبك على وشك الوصول، استعد لاستلامه.")
+            : ("Your driver is nearby! 🛵", "Your order is about to arrive — get ready to receive it.");
+    }
+
     public static (string Title, string Body) StatusUpdate(string? lang, string status, string? storeType = null)
     {
         lang = NormalizeLang(lang);

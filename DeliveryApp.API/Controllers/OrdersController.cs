@@ -18,14 +18,16 @@ namespace DeliveryApp.API.Controllers
         private readonly IFcmService _fcm;
         private readonly IPointsService _points;
         private readonly INotificationDispatcher _dispatcher;
+        private readonly IRestaurantZoneService _zones;
 
-        public OrdersController(ApplicationDbContext context, IHubService hubService, IFcmService fcm, IPointsService points, INotificationDispatcher dispatcher)
+        public OrdersController(ApplicationDbContext context, IHubService hubService, IFcmService fcm, IPointsService points, INotificationDispatcher dispatcher, IRestaurantZoneService zones)
         {
             _context = context;
             _hubService = hubService;
             _fcm = fcm;
             _points = points;
             _dispatcher = dispatcher;
+            _zones = zones;
         }
 
         private int GetUserId() =>
@@ -482,6 +484,7 @@ namespace DeliveryApp.API.Controllers
                     o.AcceptedAt,
                     o.PickedUpAt,
                     o.DeliveredAt,
+                    o.NearbyNotifiedAt,
                     // ✅ اسم العميل — تطبيق الدريفر بيعتمد عليه لما يفتح صفحة الطلب من القايمة
                     CustomerName = o.Customer.FullName,
                     Restaurant = new { o.Restaurant.Id, o.Restaurant.Name, o.Restaurant.ImageUrl, o.Restaurant.Phone, o.Restaurant.Latitude, o.Restaurant.Longitude },
@@ -953,6 +956,9 @@ namespace DeliveryApp.API.Controllers
             // ✅ نطاق ظهور الطلبات للسائق — الأدمن هو اللي بيتحكم فيه من إعدادات التوصيل (الافتراضي 1 كم)
             var driverRadiusKm = await GetDriverOrdersRadiusKmAsync();
 
+            // ✅ خريطة المحل → المنطقة المستنتجة من الإحداثيات (لفلتر "المنطقة" في التطبيق)
+            var zonesMap = await _zones.GetRestaurantZonesAsync();
+
             var raw = await _context.Orders
                 .Where(o => new[] { "Preparing", "ReadyForPickup" }.Contains(o.Status) && o.DriverId == null)
                 .Select(o => new
@@ -967,6 +973,7 @@ namespace DeliveryApp.API.Controllers
                     o.Status,
                     o.EstimatedDeliveryMin,
                     o.EstimatedDeliveryMax,
+                    o.RestaurantId,
                     RestaurantName = o.Restaurant.Name,
                     RestaurantAddress = o.Restaurant.Address,
                     RestaurantLat = o.Restaurant.Latitude,
@@ -1000,7 +1007,8 @@ namespace DeliveryApp.API.Controllers
                     ? (double?)(111.045 * Math.Sqrt(
                         Math.Pow(driverLat.Value - o.RestaurantLat, 2) +
                         Math.Pow((driverLng.Value - o.RestaurantLng) * Math.Cos(o.RestaurantLat * Math.PI / 180.0), 2)))
-                    : null
+                    : null,
+                Zone = zonesMap.TryGetValue(o.RestaurantId, out var z) ? z : null
             }).Select(o => new
             {
                 o.Id,
@@ -1020,7 +1028,9 @@ namespace DeliveryApp.API.Controllers
                 o.ItemCount,
                 o.DistanceKm,
                 // لو مفيش لوكيشن للدريفر، منقدرش نحسب المسافة فنسيبه يقبل عادي (نفس السلوك القديم)
-                CanAccept = !o.DistanceKm.HasValue || o.DistanceKm.Value <= driverRadiusKm
+                CanAccept = !o.DistanceKm.HasValue || o.DistanceKm.Value <= driverRadiusKm,
+                ZoneId = o.Zone?.ZoneId,
+                ZoneName = o.Zone?.ZoneName
             });
 
             return Ok(withDistance.OrderByDescending(o => o.CreatedAt).ToList());
@@ -1184,6 +1194,40 @@ namespace DeliveryApp.API.Controllers
             });
 
             return Ok(new { message = "Order assigned to you", orderId = order.Id });
+        }
+
+        // ─────────────────────────────────────────────
+        // PUT api/orders/{id}/notify-nearby
+        // الدريفر بيبعت للعميل تنبيه "قربت أوصل" — بيتبعت بلغة العميل (PreferredLanguage)،
+        // مسموح بس بعد ما الدريفر استلم الطلب من المحل (OnTheWay) وقبل التسليم.
+        // ─────────────────────────────────────────────
+        [Authorize(Roles = "Driver")]
+        [HttpPut("{id}/notify-nearby")]
+        public async Task<IActionResult> NotifyNearby(int id)
+        {
+            var userId = GetUserId();
+            var driver = await _context.Drivers.FirstOrDefaultAsync(d => d.UserId == userId);
+            if (driver == null) return Forbid();
+
+            var order = await _context.Orders.Include(o => o.Customer)
+                .FirstOrDefaultAsync(o => o.Id == id && o.DriverId == driver.Id);
+            if (order == null)
+                return NotFound(new { message = "Order not found" });
+
+            if (order.Status != "OnTheWay")
+                return BadRequest(new { message = "You can only notify the customer after picking up the order." });
+
+            // منع السبام: مرة كل 3 دقايق كحد أقصى للطلب ده
+            if (order.NearbyNotifiedAt.HasValue && (DateTime.UtcNow - order.NearbyNotifiedAt.Value).TotalMinutes < 3)
+                return BadRequest(new { message = "Customer was already notified recently." });
+
+            order.NearbyNotifiedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            var (title, body) = NotificationLocalizer.DriverNearby(order.Customer.PreferredLanguage);
+            await _dispatcher.NotifyUserAsync(order.CustomerId, title, body, "DriverNearby", order.Id);
+
+            return Ok(new { message = "Customer notified", nearbyNotifiedAt = order.NearbyNotifiedAt });
         }
 
         private async Task<string> GetUserLanguageAsync(int userId) =>

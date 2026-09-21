@@ -75,6 +75,10 @@ public partial class Order
 
     public DateTime? DeliveredAt { get; set; }
 
+    // ✅ آخر مرة الدريفر بعت للعميل إشعار "قربت أوصل" — nullable، بنستخدمها كمان
+    // عشان نمنع سبام (زرار واحد كل طلب، أو بفاصل زمني بسيط لو حبينا نسمح بأكتر من مرة)
+    public DateTime? NearbyNotifiedAt { get; set; }
+
     [StringLength(500)]
     public string? PrescriptionImageUrl { get; set; }
 
