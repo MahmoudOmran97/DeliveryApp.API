@@ -861,6 +861,15 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] SiteLinks table ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] SiteLinks table check failed: {ex.Message}"); }
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+        IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Orders' AND COLUMN_NAME = 'NearbyNotifiedAt')
+            ALTER TABLE [dbo].[Orders] ADD [NearbyNotifiedAt] DATETIME2 NULL;
+    ");
+        Console.WriteLine("[Startup] Orders.NearbyNotifiedAt column ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Orders.NearbyNotifiedAt check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();
