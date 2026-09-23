@@ -183,7 +183,9 @@ namespace DeliveryApp.API.Controllers
                 user.Id,
                 user.FullName,
                 user.Email,
-                user.Role
+                user.Role,
+                user.IsSuperAdmin,
+                user.Permissions
             });
         }
         [HttpPost("restaurant-login")]
@@ -220,6 +222,8 @@ namespace DeliveryApp.API.Controllers
                 user.FullName,
                 user.Email,
                 user.Role,
+                user.IsSuperAdmin,
+                user.Permissions,
                 restaurantId   // ← الجديد: MAUI بيستخدمه مباشرة بدل ما اليوزر يكتبه
             });
         }

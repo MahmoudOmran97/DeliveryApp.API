@@ -52,6 +52,14 @@ namespace DeliveryApp.API.Controllers
             return Convert.ToInt32(claim?.Value);
         }
 
+        // بيرجع صح بس لو التوكن اللي بيبعت الطلب نفسه دلوقتي لأدمن كامل الصلاحيات
+        // (السوبر أدمن هو الوحيد المسموحله يضيف/يعدّل حسابات أدمنز تانيين أو صلاحياتهم)
+        private bool IsRequesterSuperAdmin()
+        {
+            var claim = User.Claims.FirstOrDefault(x => x.Type == "IsSuperAdmin");
+            return claim != null && string.Equals(claim.Value, "true", StringComparison.OrdinalIgnoreCase);
+        }
+
         // GET api/user/all  — كل المستخدمين (لوحة صاحب المنصة)
         [Authorize(Roles = "Admin")]
         [HttpGet("all")]
@@ -89,6 +97,8 @@ namespace DeliveryApp.API.Controllers
                     u.Address,
                     u.ProfileImageUrl,
                     u.IsActive,
+                    u.IsSuperAdmin,
+                    u.Permissions,
                     u.CreatedAt,
                     RestaurantId = _context.Restaurants.Where(r => r.OwnerUserId == u.Id).Select(r => (int?)r.Id).FirstOrDefault(),
                     RestaurantName = _context.Restaurants.Where(r => r.OwnerUserId == u.Id).Select(r => r.Name).FirstOrDefault()
@@ -146,6 +156,8 @@ namespace DeliveryApp.API.Controllers
                     u.Address,
                     u.ProfileImageUrl,
                     u.IsActive,
+                    u.IsSuperAdmin,
+                    u.Permissions,
                     u.CreatedAt,
                     RestaurantId = _context.Restaurants.Where(r => r.OwnerUserId == u.Id).Select(r => (int?)r.Id).FirstOrDefault(),
                     RestaurantName = _context.Restaurants.Where(r => r.OwnerUserId == u.Id).Select(r => r.Name).FirstOrDefault()
@@ -184,6 +196,11 @@ namespace DeliveryApp.API.Controllers
             if (string.IsNullOrWhiteSpace(dto.Role) || !allowedRoles.Contains(dto.Role))
                 return BadRequest(new { message = $"Invalid role. Allowed: {string.Join(", ", allowedRoles)}" });
 
+            // ── حسابات الأدمن حساسة: السوبر أدمن بس هو اللي يقدر ينشئ أدمن جديد
+            // (سواء كامل الصلاحيات أو محدود)، عشان محدش يقدر يعمل لنفسه صلاحيات أعلى.
+            if (dto.Role == "Admin" && !IsRequesterSuperAdmin())
+                return StatusCode(403, new { message = "السوبر أدمن بس هو المسموحله يضيف حسابات أدمن" });
+
             if (await _context.Users.AnyAsync(u => u.Email == dto.Email))
                 return BadRequest(new { message = "Email already exists" });
 
@@ -199,6 +216,9 @@ namespace DeliveryApp.API.Controllers
                     Address = dto.Address?.Trim(),
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
                     IsActive = true,
+                    // بيتحددوا بس لما الدور Admin، وبيتفحصوا فوق إن الطالب سوبر أدمن
+                    IsSuperAdmin = dto.Role == "Admin" && dto.IsSuperAdmin,
+                    Permissions = dto.Role == "Admin" && !dto.IsSuperAdmin ? dto.Permissions?.Trim() : null,
                     CreatedAt = DateTime.UtcNow
                 };
 
@@ -256,6 +276,18 @@ namespace DeliveryApp.API.Controllers
             var user = await _context.Users.FindAsync(id);
             if (user == null) return NotFound(new { message = "User not found" });
 
+            // ── حسابات الأدمن حساسة: أي تعديل بيلمس دور/صلاحيات حساب Admin (سواء
+            // الحساب حالياً Admin أو هيبقى Admin بعد التعديل) لازم يكون من سوبر أدمن.
+            bool targetIsOrWillBeAdmin = user.Role == "Admin" || dto.Role == "Admin";
+            bool touchesSensitiveFields = dto.Role != null || dto.IsSuperAdmin.HasValue || dto.Permissions != null;
+            if (targetIsOrWillBeAdmin && touchesSensitiveFields && !IsRequesterSuperAdmin())
+                return StatusCode(403, new { message = "السوبر أدمن بس هو المسموحله يعدّل حسابات/صلاحيات الأدمنز" });
+
+            // ── حماية من قفل النفس برا لوحة التحكم بالغلط: مينفعش الأدمن يغيّر دوره
+            // أو يشيل صلاحية السوبر أدمن بتاعته من نفسه.
+            if (id == GetUserId() && (dto.Role != null && dto.Role != user.Role || dto.IsSuperAdmin == false && user.IsSuperAdmin))
+                return BadRequest(new { message = "لا يمكنك تعديل دورك أو صلاحياتك الخاصة من هنا" });
+
             try
             {
                 if (!string.IsNullOrWhiteSpace(dto.FullName)) user.FullName = dto.FullName.Trim();
@@ -267,6 +299,18 @@ namespace DeliveryApp.API.Controllers
                     if (!allowedRoles.Contains(dto.Role))
                         return BadRequest(new { message = $"Invalid role. Allowed: {string.Join(", ", allowedRoles)}" });
                     user.Role = dto.Role;
+                }
+                if (user.Role == "Admin")
+                {
+                    if (dto.IsSuperAdmin.HasValue) user.IsSuperAdmin = dto.IsSuperAdmin.Value;
+                    if (dto.Permissions != null) user.Permissions = user.IsSuperAdmin ? null : dto.Permissions.Trim();
+                    if (user.IsSuperAdmin) user.Permissions = null;
+                }
+                else
+                {
+                    // لو الحساب مبقاش Admin، امسح أي أثر لصلاحيات قديمة
+                    user.IsSuperAdmin = false;
+                    user.Permissions = null;
                 }
                 bool activeStatusChanged = dto.IsActive.HasValue && dto.IsActive.Value != user.IsActive;
                 if (dto.IsActive.HasValue) user.IsActive = dto.IsActive.Value;
@@ -579,6 +623,9 @@ namespace DeliveryApp.API.Controllers
         public string? VehicleType { get; set; }
         public string? LicensePlate { get; set; }
         public string? NationalId { get; set; }
+        // بتتاخد بعين الاعتبار بس لما Role = Admin
+        public bool IsSuperAdmin { get; set; }
+        public string? Permissions { get; set; }
     }
 
     public class AdminUpdateUserDto
@@ -590,5 +637,7 @@ namespace DeliveryApp.API.Controllers
         public string? Password { get; set; }
         public bool? IsActive { get; set; }
         public int? RestaurantId { get; set; }
+        public bool? IsSuperAdmin { get; set; }
+        public string? Permissions { get; set; }
     }
 }

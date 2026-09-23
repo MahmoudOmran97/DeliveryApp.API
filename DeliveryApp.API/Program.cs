@@ -870,6 +870,36 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine("[Startup] Orders.NearbyNotifiedAt column ready.");
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] Orders.NearbyNotifiedAt check failed: {ex.Message}"); }
+
+    // ── ✅ الجديد: صلاحيات الأدمنز — Users.IsSuperAdmin + Users.Permissions ──────
+    // IsSuperAdmin: أدمن كامل الصلاحيات، هو بس اللي يقدر يعدّل صلاحيات أدمنز تانيين.
+    // Permissions: قايمة أقسام مفصولة بفاصلة (زي "Orders,Drivers,Coupons") بتتفحص
+    // بس لما Role=Admin و IsSuperAdmin=0؛ لو فاضية/NULL يبقى الأدمن المحدود مالوش
+    // صلاحية على أي قسم لحد ما حد يحددله.
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'IsSuperAdmin')
+                ALTER TABLE [dbo].[Users] ADD [IsSuperAdmin] BIT NOT NULL DEFAULT 0;
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'Permissions')
+                ALTER TABLE [dbo].[Users] ADD [Permissions] NVARCHAR(1000) NULL;
+        ");
+
+        // لو مفيش ولا أدمن معمول له IsSuperAdmin=1 لسه (أول مرة الميجريشن ده يتنفذ)،
+        // بنرقّي أقدم حساب Admin (المدير الأساسي غالبًا) تلقائيًا عشان محدش يقفل برا لوحة التحكم.
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM [dbo].[Users] WHERE [Role] = N'Admin' AND [IsSuperAdmin] = 1)
+            BEGIN
+                ;WITH FirstAdmin AS (
+                    SELECT TOP (1) * FROM [dbo].[Users] WHERE [Role] = N'Admin' ORDER BY [CreatedAt] ASC
+                )
+                UPDATE FirstAdmin SET [IsSuperAdmin] = 1;
+            END
+        ");
+        Console.WriteLine("[Startup] Users.IsSuperAdmin / Users.Permissions ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] Users.IsSuperAdmin/Permissions check failed: {ex.Message}"); }
 }
 
 app.UseSwagger();

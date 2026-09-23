@@ -46,6 +46,14 @@ public partial class User
 
     public bool IsActive { get; set; }
 
+    // أدمن كامل الصلاحيات — هو بس اللي يقدر يضيف/يعدّل أدمنز تانيين ويحدد صلاحياتهم
+    public bool IsSuperAdmin { get; set; }
+
+    // قايمة أسماء الأقسام المسموحة مفصولة بفاصلة (مثال: "Orders,Drivers,Coupons")،
+    // بتتفحص بس لما Role=Admin و IsSuperAdmin=false
+    [StringLength(1000)]
+    public string? Permissions { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public DateTime? UpdatedAt { get; set; }
