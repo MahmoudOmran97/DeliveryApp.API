@@ -721,6 +721,140 @@ public class RestaurantsController : ControllerBase
         });
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // DELETE api/restaurants/{id}
+    // Soft-delete للمحل + كل أقسامه + منتجاته + الـ variants
+    // (مش hard-delete عشان الأوردرات القديمة تفضل سليمة)
+    // ─────────────────────────────────────────────────────────────────────────
+    [Authorize(Roles = "Admin")]
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        var restaurant = await _context.Restaurants
+            .Include(r => r.Categories)
+                .ThenInclude(c => c.Products)
+                    .ThenInclude(p => p.Variants)
+            .FirstOrDefaultAsync(r => r.Id == id);
+
+        if (restaurant == null || !restaurant.IsActive)
+            return NotFound(new { message = "Restaurant not found" });
+
+        restaurant.IsActive = false;
+        restaurant.IsOpen = false;
+
+        foreach (var category in restaurant.Categories)
+        {
+            category.IsActive = false;
+            foreach (var product in category.Products)
+            {
+                product.IsActive = false;
+                product.IsAvailable = false;
+                foreach (var variant in product.Variants)
+                    variant.IsActive = false;
+            }
+        }
+
+        await _context.SaveChangesAsync();
+        return Ok(new { message = "Store deleted successfully (with all categories and products)" });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POST api/restaurants/{targetId}/copy-from/{sourceId}
+    // نسخ كل الأقسام + المنتجات + الـ variants من محل لمحل تاني
+    // سوبر أدمن فقط
+    // ─────────────────────────────────────────────────────────────────────────
+    [Authorize(Roles = "Admin")]
+    [HttpPost("{targetId}/copy-from/{sourceId}")]
+    public async Task<IActionResult> CopyMenuFrom(int targetId, int sourceId)
+    {
+        if (!IsRequesterSuperAdmin())
+            return StatusCode(403, new { message = "SuperAdmin only" });
+
+        if (sourceId == targetId)
+            return BadRequest(new { message = "Source and target store must be different" });
+
+        var source = await _context.Restaurants
+            .AsNoTracking()
+            .Include(r => r.Categories)
+                .ThenInclude(c => c.Products)
+                    .ThenInclude(p => p.Variants)
+            .FirstOrDefaultAsync(r => r.Id == sourceId && r.IsActive);
+
+        if (source == null)
+            return NotFound(new { message = "Source store not found" });
+
+        var targetExists = await _context.Restaurants.AnyAsync(r => r.Id == targetId && r.IsActive);
+        if (!targetExists)
+            return NotFound(new { message = "Target store not found" });
+
+        int categoriesCopied = 0, productsCopied = 0, variantsCopied = 0;
+
+        foreach (var srcCat in source.Categories.Where(c => c.IsActive).OrderBy(c => c.SortOrder))
+        {
+            var newCat = new Category
+            {
+                RestaurantId = targetId,
+                Name = srcCat.Name,
+                ImageUrl = srcCat.ImageUrl,
+                SortOrder = srcCat.SortOrder,
+                IsActive = true
+            };
+
+            foreach (var srcProd in srcCat.Products.Where(p => p.IsActive))
+            {
+                var newProd = new Product
+                {
+                    Name = srcProd.Name,
+                    Description = srcProd.Description,
+                    Price = srcProd.Price,
+                    DiscountedPrice = srcProd.DiscountedPrice,
+                    ImageUrl = srcProd.ImageUrl,
+                    PreparationTime = srcProd.PreparationTime,
+                    Calories = srcProd.Calories,
+                    IsAvailable = srcProd.IsAvailable,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                foreach (var srcVar in srcProd.Variants.Where(v => v.IsActive).OrderBy(v => v.SortOrder))
+                {
+                    newProd.Variants.Add(new ProductVariant
+                    {
+                        Name = srcVar.Name,
+                        Price = srcVar.Price,
+                        SortOrder = srcVar.SortOrder,
+                        IsActive = true
+                    });
+                    variantsCopied++;
+                }
+
+                newCat.Products.Add(newProd);
+                productsCopied++;
+            }
+
+            _context.Categories.Add(newCat);
+            categoriesCopied++;
+        }
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Menu copied successfully",
+            sourceId,
+            targetId,
+            categoriesCopied,
+            productsCopied,
+            variantsCopied
+        });
+    }
+
+    private bool IsRequesterSuperAdmin()
+    {
+        var claim = User.Claims.FirstOrDefault(x => x.Type == "IsSuperAdmin");
+        return claim != null && string.Equals(claim.Value, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
 }
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────
