@@ -214,6 +214,20 @@ namespace DeliveryApp.API.Controllers
             var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, product.Category.RestaurantId, _context);
             if (authError != null) return authError;
 
+            // ✅ FIX: تغيير القسم (Category) كان بيتتجاهل تماماً — لازم نتأكد إن القسم الجديد
+            // موجود وتابع لنفس المحل (عشان محدش ينقل منتج لمحل تاني) وبعدين نحفظه.
+            if (dto.CategoryId > 0 && dto.CategoryId != product.CategoryId)
+            {
+                var newCategory = await _context.Categories
+                    .FirstOrDefaultAsync(c => c.Id == dto.CategoryId && c.IsActive);
+                if (newCategory == null)
+                    return BadRequest(new { message = "Category not found" });
+                if (newCategory.RestaurantId != product.Category.RestaurantId)
+                    return BadRequest(new { message = "لا يمكن نقل المنتج لقسم تابع لمحل آخر" });
+
+                product.CategoryId = newCategory.Id;
+            }
+
             product.Name = dto.Name; product.Description = dto.Description;
             product.Price = dto.Price; product.DiscountedPrice = dto.DiscountedPrice;
             product.ImageUrl = dto.ImageUrl; product.PreparationTime = dto.PreparationTime;
