@@ -724,12 +724,15 @@ public class RestaurantsController : ControllerBase
     // ─────────────────────────────────────────────────────────────────────────
     // DELETE api/restaurants/{id}
     // Soft-delete للمحل + كل أقسامه + منتجاته + الـ variants
-    // (مش hard-delete عشان الأوردرات القديمة تفضل سليمة)
+    // سوبر أدمن فقط (مش hard-delete عشان الأوردرات القديمة تفضل سليمة)
     // ─────────────────────────────────────────────────────────────────────────
     [Authorize(Roles = "Admin")]
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(int id)
     {
+        if (!IsRequesterSuperAdmin())
+            return StatusCode(403, new { message = "SuperAdmin only" });
+
         var restaurant = await _context.Restaurants
             .Include(r => r.Categories)
                 .ThenInclude(c => c.Products)
@@ -760,7 +763,7 @@ public class RestaurantsController : ControllerBase
 
     // ─────────────────────────────────────────────────────────────────────────
     // POST api/restaurants/{targetId}/copy-from/{sourceId}
-    // نسخ كل الأقسام + المنتجات + الـ variants من محل لمحل تاني
+    // نسخ الأقسام/المنتجات الجديدة فقط (متكررش اللي موجود بنفس الاسم في الهدف)
     // سوبر أدمن فقط
     // ─────────────────────────────────────────────────────────────────────────
     [Authorize(Roles = "Admin")]
@@ -783,25 +786,67 @@ public class RestaurantsController : ControllerBase
         if (source == null)
             return NotFound(new { message = "Source store not found" });
 
-        var targetExists = await _context.Restaurants.AnyAsync(r => r.Id == targetId && r.IsActive);
-        if (!targetExists)
+        var target = await _context.Restaurants
+            .Include(r => r.Categories)
+                .ThenInclude(c => c.Products)
+            .FirstOrDefaultAsync(r => r.Id == targetId && r.IsActive);
+
+        if (target == null)
             return NotFound(new { message = "Target store not found" });
 
+        // أقسام الهدف النشطة بالاسم (case-insensitive) عشان نتجنب التكرار
+        var targetCatsByName = target.Categories
+            .Where(c => c.IsActive)
+            .GroupBy(c => NormalizeName(c.Name))
+            .ToDictionary(g => g.Key, g => g.First());
+
         int categoriesCopied = 0, productsCopied = 0, variantsCopied = 0;
+        int categoriesSkipped = 0, productsSkipped = 0;
 
         foreach (var srcCat in source.Categories.Where(c => c.IsActive).OrderBy(c => c.SortOrder))
         {
-            var newCat = new Category
+            var catKey = NormalizeName(srcCat.Name);
+            Category targetCat;
+            bool isNewCategory = false;
+
+            if (targetCatsByName.TryGetValue(catKey, out var existingCat))
             {
-                RestaurantId = targetId,
-                Name = srcCat.Name,
-                ImageUrl = srcCat.ImageUrl,
-                SortOrder = srcCat.SortOrder,
-                IsActive = true
-            };
+                targetCat = existingCat;
+                categoriesSkipped++;
+            }
+            else
+            {
+                targetCat = new Category
+                {
+                    RestaurantId = targetId,
+                    Name = srcCat.Name,
+                    ImageUrl = srcCat.ImageUrl,
+                    SortOrder = srcCat.SortOrder,
+                    IsActive = true
+                };
+                _context.Categories.Add(targetCat);
+                targetCatsByName[catKey] = targetCat;
+                isNewCategory = true;
+                categoriesCopied++;
+            }
+
+            // منتجات القسم الموجود في الهدف (بالاسم) — لو القسم جديد لسه فاضي
+            var existingProductNames = targetCat.Products
+                .Where(p => p.IsActive)
+                .Select(p => NormalizeName(p.Name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var productsToAdd = new List<Product>();
 
             foreach (var srcProd in srcCat.Products.Where(p => p.IsActive))
             {
+                var prodKey = NormalizeName(srcProd.Name);
+                if (existingProductNames.Contains(prodKey))
+                {
+                    productsSkipped++;
+                    continue;
+                }
+
                 var newProd = new Product
                 {
                     Name = srcProd.Name,
@@ -828,26 +873,37 @@ public class RestaurantsController : ControllerBase
                     variantsCopied++;
                 }
 
-                newCat.Products.Add(newProd);
+                productsToAdd.Add(newProd);
+                existingProductNames.Add(prodKey);
                 productsCopied++;
             }
 
-            _context.Categories.Add(newCat);
-            categoriesCopied++;
+            if (productsToAdd.Count == 0 && isNewCategory)
+            {
+                // قسم جديد فاضي من غير منتجات جديدة — نسيبه عادي (لو المصدر فاضي)
+            }
+
+            foreach (var p in productsToAdd)
+                targetCat.Products.Add(p);
         }
 
         await _context.SaveChangesAsync();
 
         return Ok(new
         {
-            message = "Menu copied successfully",
+            message = "Menu synced successfully (new items only)",
             sourceId,
             targetId,
             categoriesCopied,
             productsCopied,
-            variantsCopied
+            variantsCopied,
+            categoriesSkipped,
+            productsSkipped
         });
     }
+
+    private static string NormalizeName(string? name) =>
+        (name ?? string.Empty).Trim().ToLowerInvariant();
 
     private bool IsRequesterSuperAdmin()
     {
