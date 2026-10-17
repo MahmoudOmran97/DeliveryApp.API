@@ -1,5 +1,6 @@
 ﻿using DeliveryApp.API.Authorization;
 using DeliveryApp.API.Models;
+using DeliveryApp.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -103,43 +104,106 @@ namespace DeliveryApp.API.Controllers
         }
 
         // GET api/products/search?q=kofta&restaurantId=1
+        //   اختياري: lat / lng / radiusKm → بيرجّع بس منتجات المحلات اللي جوه نطاق التوصيل (الزون)
+        //            category            → نوع المحل (Restaurant / Pharmacy / Supermarket / Grocery ...)
+        //   كل بارامتر جديد اختياري، فالنداء القديم (q بس) بيشتغل زي ما هو.
         [HttpGet("search")]
         public async Task<IActionResult> Search(
-            [FromQuery] string q,
+            [FromQuery] string? q,
             [FromQuery] int? restaurantId,
             [FromQuery] decimal? maxPrice,
+            [FromQuery] double? lat,
+            [FromQuery] double? lng,
+            [FromQuery] double radiusKm = 10.0,
+            [FromQuery] string? category = null,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 20;
+            if (pageSize > 50) pageSize = 50;
+
             var query = _context.Products
-                .Where(p => p.IsActive && p.IsAvailable)
+                .Where(p => p.IsActive && p.IsAvailable && p.Category.Restaurant.IsActive)
                 .AsQueryable();
 
             if (!string.IsNullOrWhiteSpace(q))
-                query = query.Where(p => p.Name.Contains(q) || p.Description!.Contains(q));
+            {
+                var term = q.Trim();
+                query = query.Where(p => p.Name.Contains(term) || (p.Description != null && p.Description.Contains(term)));
+            }
 
             if (restaurantId.HasValue)
                 query = query.Where(p => p.Category.RestaurantId == restaurantId.Value);
 
+            if (!string.IsNullOrWhiteSpace(category))
+                query = query.Where(p => p.Category.Restaurant.StoreType == category);
+
             if (maxPrice.HasValue)
                 query = query.Where(p => (p.DiscountedPrice ?? p.Price) <= maxPrice.Value);
 
+            // ✅ الزون: لو معانا موقع العميل نفلتر المحلات بالمسافة (Haversine) والسيرفر هو اللي بيفرض
+            // السقف الحقيقي (MaxDeliveryZoneKm) زي ما بيحصل في /api/restaurants بالظبط.
+            var distances = new Dictionary<int, double>();
+            if (lat.HasValue && lng.HasValue)
+            {
+                var (maxZoneKm, _) = await DeliveryFeeCalculator.GetZoneSettingsAsync(_context);
+                radiusKm = Math.Min(radiusKm, maxZoneKm);
+
+                var stores = await _context.Restaurants
+                    .Where(r => r.IsActive)
+                    .Select(r => new { r.Id, r.Latitude, r.Longitude })
+                    .ToListAsync();
+
+                foreach (var r in stores)
+                {
+                    var d = DeliveryFeeCalculator.GetDistanceKm(lat.Value, lng.Value, r.Latitude, r.Longitude);
+                    if (d <= radiusKm) distances[r.Id] = d;
+                }
+
+                var inZoneIds = distances.Keys.ToList();
+                query = query.Where(p => inZoneIds.Contains(p.Category.RestaurantId));
+            }
+
             var total = await query.CountAsync();
-            var products = await query
+            var rows = await query
+                .OrderBy(p => p.Name)
                 .Skip((page - 1) * pageSize).Take(pageSize)
                 .Select(p => new
                 {
                     p.Id,
                     p.Name,
+                    p.Description,
                     p.Price,
                     p.DiscountedPrice,
                     p.ImageUrl,
                     p.IsAvailable,
                     CategoryName = p.Category.Name,
                     RestaurantId = p.Category.RestaurantId,
-                    RestaurantName = p.Category.Restaurant.Name
+                    RestaurantName = p.Category.Restaurant.Name,
+                    RestaurantImage = p.Category.Restaurant.ImageUrl,
+                    RestaurantIsOpen = p.Category.Restaurant.IsOpen,
+                    StoreType = p.Category.Restaurant.StoreType
                 })
                 .ToListAsync();
+
+            var products = rows.Select(p => new
+            {
+                p.Id,
+                p.Name,
+                p.Description,
+                p.Price,
+                p.DiscountedPrice,
+                p.ImageUrl,
+                p.IsAvailable,
+                p.CategoryName,
+                p.RestaurantId,
+                p.RestaurantName,
+                p.RestaurantImage,
+                p.RestaurantIsOpen,
+                p.StoreType,
+                DistanceKm = distances.TryGetValue(p.RestaurantId, out var dist) ? (double?)dist : null
+            }).ToList();
 
             return Ok(new { total, page, pageSize, data = products });
         }
