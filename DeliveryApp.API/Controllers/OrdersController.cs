@@ -101,15 +101,49 @@ namespace DeliveryApp.API.Controllers
                     .Where(v => variantIds.Contains(v.Id) && v.IsActive)
                     .ToDictionaryAsync(v => v.Id);
 
+            // ✅ مجموعات الاختيارات (اختار 2 صوص من 8 ...): بنحمّل مجموعات كل المنتجات اللي في الأوردر
+            var optionGroupsByProduct = (await _context.ProductOptionGroups
+                    .Include(g => g.Items)
+                    .Where(g => productIds.Contains(g.ProductId) && g.IsActive)
+                    .OrderBy(g => g.SortOrder)
+                    .ToListAsync())
+                .GroupBy(g => g.ProductId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            // الاختيارات المختارة لكل سطر (بنفس ترتيب dto.Items)
+            var chosenPerItem = new List<List<ProductOptionItem>>();
+
             foreach (var item in dto.Items)
             {
                 if (!products.ContainsKey(item.ProductId))
                     return BadRequest(new { message = $"Product {item.ProductId} not found or unavailable" });
                 if (item.VariantId.HasValue && !variants.ContainsKey(item.VariantId.Value))
                     return BadRequest(new { message = $"Variant {item.VariantId} not found" });
+
+                // السيرفر هو اللي بيتأكد: الاختيارات تابعة للمنتج ده، وعددها جوه حدود كل مجموعة (أقل/أكبر)
+                var productGroups = optionGroupsByProduct.TryGetValue(item.ProductId, out var pg)
+                    ? pg : new List<ProductOptionGroup>();
+                var validItems = productGroups.SelectMany(g => g.Items.Where(o => o.IsActive)).ToDictionary(o => o.Id);
+
+                var chosen = new List<ProductOptionItem>();
+                foreach (var optionId in (item.OptionIds ?? new List<int>()).Distinct())
+                {
+                    if (!validItems.TryGetValue(optionId, out var opt))
+                        return BadRequest(new { message = $"Option {optionId} is not valid for product {item.ProductId}" });
+                    chosen.Add(opt);
+                }
+
+                foreach (var g in productGroups)
+                {
+                    var count = chosen.Count(o => o.GroupId == g.Id);
+                    if (count < g.MinSelect || count > g.MaxSelect)
+                        return BadRequest(new { message = $"اختيارات '{g.Name}' غير صحيحة (المطلوب من {g.MinSelect} إلى {g.MaxSelect})" });
+                }
+
+                chosenPerItem.Add(chosen);
             }
 
-            var orderItems = dto.Items.Select(i =>
+            var orderItems = dto.Items.Select((i, idx) =>
             {
                 decimal unitPrice;
                 string? variantName = null;
@@ -123,6 +157,22 @@ namespace DeliveryApp.API.Controllers
                 else
                     unitPrice = products[i.ProductId].DiscountedPrice ?? products[i.ProductId].Price;
 
+                // السعر النهائي = سعر المنتج/المقاس + إضافات الاختيارات (الصوصات العادية إضافتها 0)
+                var chosen = chosenPerItem[idx];
+                unitPrice += chosen.Sum(o => o.ExtraPrice);
+
+                string? optionsText = null;
+                if (chosen.Count > 0)
+                {
+                    var groupOrder = optionGroupsByProduct.TryGetValue(i.ProductId, out var pgs)
+                        ? pgs : new List<ProductOptionGroup>();
+                    optionsText = string.Join(" | ", groupOrder
+                        .Select(g => (g, picked: chosen.Where(o => o.GroupId == g.Id).OrderBy(o => o.SortOrder).ToList()))
+                        .Where(x => x.picked.Count > 0)
+                        .Select(x => $"{x.g.Name}: {string.Join(", ", x.picked.Select(o => o.ExtraPrice > 0 ? $"{o.Name} (+{o.ExtraPrice:0.##})" : o.Name))}"));
+                    if (optionsText.Length > 500) optionsText = optionsText[..500];
+                }
+
                 return new OrderItem
                 {
                     ProductId = i.ProductId,
@@ -130,7 +180,8 @@ namespace DeliveryApp.API.Controllers
                     UnitPrice = unitPrice,
                     Notes = i.Notes,
                     VariantId = i.VariantId,
-                    VariantName = variantName
+                    VariantName = variantName,
+                    OptionsText = optionsText
                 };
             }).ToList();
 
@@ -506,7 +557,9 @@ namespace DeliveryApp.API.Controllers
                         i.Quantity,
                         i.UnitPrice,
                         i.TotalPrice,
-                        i.Notes
+                        i.Notes,
+                        i.VariantName,
+                        i.OptionsText
                     }),
                     // ✅ لو الأوردر اتقيم قبل كده، ابعت التقييم عشان الابلكيشن
                     // يعرضه بدل ما يفضل يطلب من العميل يقيم تاني
@@ -672,7 +725,9 @@ namespace DeliveryApp.API.Controllers
                         i.Quantity,
                         i.UnitPrice,
                         i.TotalPrice,
-                        i.Notes
+                        i.Notes,
+                        i.VariantName,
+                        i.OptionsText
                     })
                 })
                 .ToListAsync();
@@ -1080,7 +1135,9 @@ namespace DeliveryApp.API.Controllers
                         i.Quantity,
                         i.UnitPrice,
                         i.TotalPrice,
-                        i.Notes
+                        i.Notes,
+                        i.VariantName,
+                        i.OptionsText
                     })
                 })
                 .FirstOrDefaultAsync();
@@ -1262,6 +1319,8 @@ namespace DeliveryApp.API.Controllers
         public string? Notes { get; set; }
         public int? VariantId { get; set; }
         public decimal? UnitPriceOverride { get; set; }
+        // ✅ الاختيارات المختارة من مجموعات الاختيارات (اختار 2 صوص ...) — السيرفر بيتحقق منها وبيحسب السعر
+        public List<int>? OptionIds { get; set; }
     }
 
     public class CancelOrderDto { public string? Reason { get; set; } }

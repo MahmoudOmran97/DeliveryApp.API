@@ -48,4 +48,7 @@ public partial class Product
 
     [InverseProperty("Product")]
     public virtual ICollection<ProductVariant> Variants { get; set; } = new List<ProductVariant>();
+
+    // ✅ مجموعات الاختيارات (اختار 2 صوص من 8 ...)
+    public virtual ICollection<ProductOptionGroup> OptionGroups { get; set; } = new List<ProductOptionGroup>();
 }

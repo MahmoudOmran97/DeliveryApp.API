@@ -44,7 +44,14 @@ namespace DeliveryApp.API.Controllers
                     RestaurantId = p.Category.RestaurantId,
                     RestaurantName = p.Category.Restaurant.Name,
                     Variants = p.Variants.Where(v => v.IsActive).OrderBy(v => v.SortOrder)
-                        .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder }).ToList()
+                        .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder }).ToList(),
+                    OptionGroups = p.OptionGroups.Where(g => g.IsActive).OrderBy(g => g.SortOrder)
+                        .Select(g => new
+                        {
+                            g.Id, g.Name, g.MinSelect, g.MaxSelect, g.SortOrder,
+                            Items = g.Items.Where(i => i.IsActive).OrderBy(i => i.SortOrder)
+                                .Select(i => new { i.Id, i.Name, i.ExtraPrice, i.SortOrder }).ToList()
+                        }).ToList()
                 })
                 .ToListAsync();
 
@@ -228,7 +235,14 @@ namespace DeliveryApp.API.Controllers
                     Category = new { p.Category.Id, p.Category.Name },
                     RestaurantId = p.Category.RestaurantId,
                     Variants = p.Variants.Where(v => v.IsActive).OrderBy(v => v.SortOrder)
-                        .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder }).ToList()
+                        .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder }).ToList(),
+                    OptionGroups = p.OptionGroups.Where(g => g.IsActive).OrderBy(g => g.SortOrder)
+                        .Select(g => new
+                        {
+                            g.Id, g.Name, g.MinSelect, g.MaxSelect, g.SortOrder,
+                            Items = g.Items.Where(i => i.IsActive).OrderBy(i => i.SortOrder)
+                                .Select(i => new { i.Id, i.Name, i.ExtraPrice, i.SortOrder }).ToList()
+                        }).ToList()
                 })
                 .FirstOrDefaultAsync();
 
@@ -362,6 +376,106 @@ namespace DeliveryApp.API.Controllers
             await _context.SaveChangesAsync();
             return Ok(new { message = "Variants saved" });
         }
+
+        // POST api/products/{id}/option-groups
+        // بيستبدل كل مجموعات الاختيارات بتاعة المنتج (اختار 2 صوص من 8 ...). قائمة فاضية = مسح الكل.
+        // الأوردرات القديمة مش بتتأثر لأنها بتخزن نص الاختيارات مش الـ Ids.
+        [Authorize(Roles = "Restaurant,Admin")]
+        [HttpPost("{id:int}/option-groups")]
+        public async Task<IActionResult> SetOptionGroups(int id, [FromBody] List<OptionGroupDto>? groups)
+        {
+            var product = await _context.Products.Include(p => p.Category).FirstOrDefaultAsync(p => p.Id == id);
+            if (product == null) return NotFound();
+
+            var authError = await RestaurantOwnerAuth.CheckOwnerAsync(User, product.Category.RestaurantId, _context);
+            if (authError != null) return authError;
+
+            groups ??= new List<OptionGroupDto>();
+
+            // ── تحقق + تنضيف ──
+            var cleaned = new List<OptionGroupDto>();
+            foreach (var g in groups)
+            {
+                var name = (g.Name ?? "").Trim();
+                var items = (g.Items ?? new List<OptionItemDto>())
+                    .Where(i => !string.IsNullOrWhiteSpace(i.Name))
+                    .Select(i => new OptionItemDto
+                    {
+                        Name = i.Name.Trim(),
+                        ExtraPrice = i.ExtraPrice < 0 ? 0 : i.ExtraPrice,
+                        SortOrder = i.SortOrder
+                    })
+                    .ToList();
+
+                if (name.Length == 0 && items.Count == 0) continue; // صف فاضي
+                if (name.Length == 0) return BadRequest(new { message = "كل مجموعة اختيارات لازم يكون لها اسم" });
+                if (items.Count == 0) return BadRequest(new { message = $"المجموعة '{name}' محتاجة اختيار واحد على الأقل" });
+
+                var min = Math.Max(0, g.MinSelect);
+                var max = g.MaxSelect <= 0 ? items.Count : g.MaxSelect;
+                if (max > items.Count) max = items.Count;
+                if (min > max) min = max;
+
+                cleaned.Add(new OptionGroupDto
+                {
+                    Name = name.Length > 150 ? name[..150] : name,
+                    MinSelect = min,
+                    MaxSelect = max,
+                    SortOrder = g.SortOrder,
+                    Items = items
+                });
+            }
+
+            var existingGroups = await _context.ProductOptionGroups
+                .Include(g => g.Items)
+                .Where(g => g.ProductId == id)
+                .ToListAsync();
+            _context.ProductOptionItems.RemoveRange(existingGroups.SelectMany(g => g.Items));
+            _context.ProductOptionGroups.RemoveRange(existingGroups);
+
+            foreach (var (g, gi) in cleaned.Select((g, i) => (g, i)))
+            {
+                var group = new ProductOptionGroup
+                {
+                    ProductId = id,
+                    Name = g.Name,
+                    MinSelect = g.MinSelect,
+                    MaxSelect = g.MaxSelect,
+                    SortOrder = gi,
+                    IsActive = true
+                };
+                foreach (var (it, ii) in g.Items.Select((it, i) => (it, i)))
+                {
+                    group.Items.Add(new ProductOptionItem
+                    {
+                        Name = it.Name.Length > 100 ? it.Name[..100] : it.Name,
+                        ExtraPrice = it.ExtraPrice,
+                        SortOrder = ii,
+                        IsActive = true
+                    });
+                }
+                _context.ProductOptionGroups.Add(group);
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Option groups saved" });
+        }
+    }
+
+    public class OptionGroupDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public int MinSelect { get; set; }
+        public int MaxSelect { get; set; } = 1;
+        public int SortOrder { get; set; }
+        public List<OptionItemDto> Items { get; set; } = new();
+    }
+
+    public class OptionItemDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public decimal ExtraPrice { get; set; }
+        public int SortOrder { get; set; }
     }
 
     public class VariantDto

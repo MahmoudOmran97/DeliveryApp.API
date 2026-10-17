@@ -34,6 +34,10 @@ public partial class ApplicationDbContext : DbContext
 
     public virtual DbSet<ProductVariant> ProductVariants { get; set; }
 
+    public virtual DbSet<ProductOptionGroup> ProductOptionGroups { get; set; }
+
+    public virtual DbSet<ProductOptionItem> ProductOptionItems { get; set; }
+
     public virtual DbSet<PointTransaction> PointTransactions { get; set; }
 
     public virtual DbSet<Rating> Ratings { get; set; }

@@ -237,7 +237,9 @@ namespace DeliveryApp.API.Controllers
                     {
                         ProductName = i.Product.Name,
                         i.Quantity,
-                        i.Notes
+                        i.Notes,
+                        i.VariantName,
+                        i.OptionsText
                     })
                 })
                 .FirstOrDefaultAsync();

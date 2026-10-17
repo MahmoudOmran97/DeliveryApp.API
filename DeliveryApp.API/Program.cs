@@ -513,6 +513,45 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex) { Console.WriteLine($"[Startup] ProductVariants failed: {ex.Message}"); }
 
+    // ── ProductOptionGroups + ProductOptionItems + OrderItems.OptionsText ───
+    // مجموعات الاختيارات (اختار 2 صوص من 8) — مستقلة عن ProductVariants
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ProductOptionGroups')
+            BEGIN
+                CREATE TABLE [dbo].[ProductOptionGroups] (
+                    [Id] INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [ProductId] INT NOT NULL,
+                    [Name] NVARCHAR(150) NOT NULL,
+                    [MinSelect] INT NOT NULL DEFAULT 0,
+                    [MaxSelect] INT NOT NULL DEFAULT 1,
+                    [SortOrder] INT NOT NULL DEFAULT 0,
+                    [IsActive] BIT NOT NULL DEFAULT 1,
+                    CONSTRAINT [FK_ProductOptionGroups_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products]([Id])
+                );
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ProductOptionItems')
+            BEGIN
+                CREATE TABLE [dbo].[ProductOptionItems] (
+                    [Id] INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    [GroupId] INT NOT NULL,
+                    [Name] NVARCHAR(100) NOT NULL,
+                    [ExtraPrice] DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    [SortOrder] INT NOT NULL DEFAULT 0,
+                    [IsActive] BIT NOT NULL DEFAULT 1,
+                    CONSTRAINT [FK_ProductOptionItems_Groups] FOREIGN KEY ([GroupId]) REFERENCES [dbo].[ProductOptionGroups]([Id])
+                );
+            END
+
+            IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'OrderItems' AND COLUMN_NAME = 'OptionsText')
+                ALTER TABLE [dbo].[OrderItems] ADD [OptionsText] NVARCHAR(500) NULL;
+        ");
+        Console.WriteLine("[Startup] ProductOptionGroups/Items + OrderItems.OptionsText ready.");
+    }
+    catch (Exception ex) { Console.WriteLine($"[Startup] ProductOptionGroups failed: {ex.Message}"); }
+
     // ── PointTransactions + User.PointsBalance + Order columns ─────────────
     try
     {

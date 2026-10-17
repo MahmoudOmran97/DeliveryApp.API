@@ -424,7 +424,14 @@ public class RestaurantsController : ControllerBase
                             .Where(v => v.IsActive)
                             .OrderBy(v => v.SortOrder)
                             .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder })
-                            .ToList()
+                            .ToList(),
+                        OptionGroups = p.OptionGroups.Where(g => g.IsActive).OrderBy(g => g.SortOrder)
+                            .Select(g => new
+                            {
+                                g.Id, g.Name, g.MinSelect, g.MaxSelect, g.SortOrder,
+                                Items = g.Items.Where(i => i.IsActive).OrderBy(i => i.SortOrder)
+                                    .Select(i => new { i.Id, i.Name, i.ExtraPrice, i.SortOrder }).ToList()
+                            }).ToList()
                     }).ToList()
             })
             .ToListAsync();
@@ -450,6 +457,7 @@ public class RestaurantsController : ControllerBase
                 p.CategoryId,
                 p.CategoryName,
                 p.Variants,
+                p.OptionGroups,
                 SalesCount = salesCounts.TryGetValue(p.Id, out var cnt) ? cnt : 0,
                 IsBestSeller = bestSellerIds.Contains(p.Id)
             }).ToList()
@@ -533,7 +541,14 @@ public class RestaurantsController : ControllerBase
                     .Where(v => v.IsActive)
                     .OrderBy(v => v.SortOrder)
                     .Select(v => new { v.Id, v.Name, v.Price, v.SortOrder })
-                    .ToList()
+                    .ToList(),
+                OptionGroups = p.OptionGroups.Where(g => g.IsActive).OrderBy(g => g.SortOrder)
+                    .Select(g => new
+                    {
+                        g.Id, g.Name, g.MinSelect, g.MaxSelect, g.SortOrder,
+                        Items = g.Items.Where(i => i.IsActive).OrderBy(i => i.SortOrder)
+                            .Select(i => new { i.Id, i.Name, i.ExtraPrice, i.SortOrder }).ToList()
+                    }).ToList()
             })
             .ToListAsync();
 
@@ -781,6 +796,10 @@ public class RestaurantsController : ControllerBase
             .Include(r => r.Categories)
                 .ThenInclude(c => c.Products)
                     .ThenInclude(p => p.Variants)
+            .Include(r => r.Categories)
+                .ThenInclude(c => c.Products)
+                    .ThenInclude(p => p.OptionGroups)
+                        .ThenInclude(g => g.Items)
             .FirstOrDefaultAsync(r => r.Id == sourceId && r.IsActive);
 
         if (source == null)
@@ -871,6 +890,30 @@ public class RestaurantsController : ControllerBase
                         IsActive = true
                     });
                     variantsCopied++;
+                }
+
+                // ✅ مجموعات الاختيارات (اختار 2 صوص ...) بتتنسخ مع المنتج
+                foreach (var srcGroup in srcProd.OptionGroups.Where(g => g.IsActive).OrderBy(g => g.SortOrder))
+                {
+                    var newGroup = new ProductOptionGroup
+                    {
+                        Name = srcGroup.Name,
+                        MinSelect = srcGroup.MinSelect,
+                        MaxSelect = srcGroup.MaxSelect,
+                        SortOrder = srcGroup.SortOrder,
+                        IsActive = true
+                    };
+                    foreach (var srcItem in srcGroup.Items.Where(i => i.IsActive).OrderBy(i => i.SortOrder))
+                    {
+                        newGroup.Items.Add(new ProductOptionItem
+                        {
+                            Name = srcItem.Name,
+                            ExtraPrice = srcItem.ExtraPrice,
+                            SortOrder = srcItem.SortOrder,
+                            IsActive = true
+                        });
+                    }
+                    newProd.OptionGroups.Add(newGroup);
                 }
 
                 productsToAdd.Add(newProd);

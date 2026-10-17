@@ -32,6 +32,10 @@ public partial class OrderItem
     [StringLength(100)]
     public string? VariantName { get; set; }
 
+    // ✅ الاختيارات اللي العميل اختارها (نص جاهز للعرض عند المحل والمندوب والعميل)، مثلاً: "صوص: ثوم، باربكيو"
+    [StringLength(500)]
+    public string? OptionsText { get; set; }
+
     [ForeignKey("OrderId")]
     [InverseProperty("OrderItems")]
     public virtual Order Order { get; set; } = null!;
